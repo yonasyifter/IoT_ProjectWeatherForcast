@@ -57,12 +57,12 @@ function formatValue(v, unit) {
 }
 </script>
 
-<template class="bg-Secondary">
+<template>
   <div class="min-vh-100 d-flex align-items-center">
-    <div class="container bg-dark text-white p-8 rounded shadow-lg app">
+    <div class="container bg-dark text-white p-8 rounded shadow-lg">
       <div class="row justify-content-center">
-        <div class="col-12 col-md-6 col-lg-10">
-          <div class="text-center mb-6">
+        <div class="col-12 col-sm-6 col-md-8 col-lg-12">
+          <div class="text-center mb-8">
             <h1 class="display-6 fw-bold">Smart Park Project</h1>
             <p class="text-muted ">Real-time sensor dashboard</p>
           </div>

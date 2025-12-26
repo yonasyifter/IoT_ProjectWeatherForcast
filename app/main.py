@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from .routes.weather import router as weather_router
+from routes.weather import router as weather_router
 
 app = FastAPI(docs_url="/", redoc_url=None, title="IoT Weather API", version="1.0.0")
 
@@ -20,7 +20,7 @@ app.add_middleware(
 )
 
 # Serve the static frontend (index.html) from app/static
-app.mount("/index", StaticFiles(directory="app/static", html=True), name="static")
+#app.mount("/index", StaticFiles(directory="app/static", html=True), name="static")
 
 app.include_router(weather_router)
 

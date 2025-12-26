@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Query
 from typing import List, Dict, Any
-from app.schemas import WeatherPoint
-from app.influx import query as influx_query
-from app.config import INFLUXDB_BUCKET, INFLUXDB_Measurement as meas
+from schemas import WeatherPoint
+from influx import query as influx_query
+from config import INFLUXDB_BUCKET, INFLUXDB_Measurement as meas
 
 router = APIRouter(prefix="/api/weather", tags=["weather"])
 

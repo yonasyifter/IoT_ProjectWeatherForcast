@@ -1,5 +1,5 @@
 from influxdb_client import InfluxDBClient
-from app.config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, validate_config
+from config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, validate_config
 
 validate_config()
 
