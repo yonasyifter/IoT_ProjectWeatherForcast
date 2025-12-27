@@ -1,13 +1,23 @@
-// SensorDashboardPage.vue - Updated for Multiple Devices
+// SensorDashboardPage.vue - Updated with Search Validation
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import AppShell from '../components/layout/AppShell.vue'
 import SensorPanel from '../components/sensors/SensorPanel.vue'
 
+const tabs = [
+  { key: 'sources', label: 'SOURCES' },
+  { key: 'buckets', label: 'BUCKETS' },
+  { key: 'telegraph', label: 'TELEGRAPH' },
+  { key: 'api', label: 'API TOKENS' },
+]
+const activeTab = ref('buckets')
+
 const devices = ref([]) // Array to store all device readings
 const error = ref('')
 const loading = ref(false)
 const searchQuery = ref('')
+const searchAttempted = ref(false)
+const notFoundMessage = ref('')
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 let timer = null
@@ -67,14 +77,43 @@ const filteredDevices = computed(() => {
     return devices.value
   }
   const query = searchQuery.value.toLowerCase()
-  return devices.value.filter(device => 
-    device.deviceId.toLowerCase().includes(query)
-  )
+  return devices.value.filter(device => {
+    const deviceIdStr = String(device.deviceId || '').toLowerCase()
+    return deviceIdStr.includes(query)
+  })
 })
 
 function handleSearch() {
-  // Search is handled by computed property
-  console.log('Searching for:', searchQuery.value)
+  searchAttempted.value = true
+  notFoundMessage.value = ''
+  
+  if (!searchQuery.value.trim()) {
+    // If search is empty, show all devices
+    searchAttempted.value = false
+    return
+  }
+  
+  const query = searchQuery.value.toLowerCase()
+  const found = devices.value.some(device => {
+    const deviceIdStr = String(device.deviceId || '').toLowerCase()
+    return deviceIdStr.includes(query)
+  })
+  
+  if (!found) {
+    notFoundMessage.value = `Device ID "${searchQuery.value}" does not exist`
+    // Auto-hide message after 5 seconds
+    setTimeout(() => {
+      notFoundMessage.value = ''
+    }, 5000)
+  }
+  
+  console.log('Searching for:', searchQuery.value, 'Found:', found)
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+  searchAttempted.value = false
+  notFoundMessage.value = ''
 }
 
 function formatValue(v, unit) {
@@ -111,10 +150,19 @@ onUnmounted(() => {
             class="form-control bg-black bg-opacity-25 border-secondary text-white"
             placeholder="Search based on device_ID..." 
           />
+          <button 
+            v-if="searchQuery"
+            class="btn btn-outline-secondary"
+            @click="clearSearch"
+            title="Clear search"
+          >
+            <i class="bi bi-x-lg"></i>
+          </button>
         </div>
 
         <div class="d-flex gap-2 flex-shrink-0">
           <button class="btn btn-outline-secondary fw-bold" @click="handleSearch">
+            <i class="bi bi-search me-1"></i>
             Search
           </button>
           <button class="btn btn-outline-primary fw-bold" @click="loadLatest">
@@ -124,10 +172,19 @@ onUnmounted(() => {
         </div>
 
         <div class="ms-auto text-secondary">
-          <strong>{{ filteredDevices.length }}</strong> device{{ filteredDevices.length !== 1 ? 's' : '' }} found
+          <strong>{{ filteredDevices.length }}</strong> device{{ filteredDevices.length !== 1 ? 's' : '' }} 
+          {{ searchQuery ? 'found' : 'total' }}
         </div>
       </div>
     </template>
+
+    <!-- Device Not Found Alert -->
+    <div v-if="notFoundMessage" class="alert alert-warning alert-dismissible fade show m-3" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>
+      <strong>{{ notFoundMessage }}</strong>
+      <p class="mb-0 mt-2 small">Available devices: {{ devices.map(d => d.deviceId).join(', ') || 'None' }}</p>
+      <button type="button" class="btn-close" @click="notFoundMessage = ''" aria-label="Close"></button>
+    </div>
 
     <!-- Loading State -->
     <div v-if="loading && devices.length === 0" class="text-center py-5">
@@ -143,15 +200,34 @@ onUnmounted(() => {
       <strong>Error:</strong> {{ error }}
     </div>
 
-    <!-- Empty State -->
-    <div v-else-if="filteredDevices.length === 0" class="text-center py-5">
+    <!-- Empty State - No Data at All -->
+    <div v-else-if="devices.length === 0" class="text-center py-5">
       <i class="bi bi-inbox fs-1 text-secondary"></i>
-      <p class="text-secondary mt-3">
-        {{ searchQuery ? 'No devices found matching your search' : 'No device data available' }}
-      </p>
+      <p class="text-secondary mt-3">No device data available</p>
       <button class="btn btn-primary mt-2" @click="loadLatest">
         <i class="bi bi-arrow-clockwise me-1"></i>
         Reload Data
+      </button>
+    </div>
+
+    <!-- Search Result - No Matches -->
+    <div v-else-if="searchAttempted && filteredDevices.length === 0" class="text-center py-5">
+      <i class="bi bi-search fs-1 text-warning"></i>
+      <p class="text-secondary mt-3 h5">No devices found matching "{{ searchQuery }}"</p>
+      <p class="text-muted">Try searching for one of these available devices:</p>
+      <div class="d-flex flex-wrap justify-content-center gap-2 mt-3">
+        <button 
+          v-for="device in devices" 
+          :key="device.deviceId"
+          class="btn btn-outline-primary btn-sm"
+          @click="searchQuery = device.deviceId; handleSearch()"
+        >
+          {{ device.deviceId }}
+        </button>
+      </div>
+      <button class="btn btn-secondary mt-4" @click="clearSearch">
+        <i class="bi bi-x-circle me-1"></i>
+        Clear Search & Show All
       </button>
     </div>
 
@@ -178,7 +254,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Refresh Indicator -->
-    <div v-if="loading && devices.length > 0" class="position-fixed bottom-0 end-0 m-3">
+    <div v-if="loading && devices.length > 0" class="position-fixed bottom-0 end-0 m-3" style="z-index: 1050;">
       <div class="bg-primary text-white px-3 py-2 rounded shadow">
         <div class="spinner-border spinner-border-sm me-2" role="status">
           <span class="visually-hidden">Loading...</span>

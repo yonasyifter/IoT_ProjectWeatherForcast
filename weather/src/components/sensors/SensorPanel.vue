@@ -1,4 +1,4 @@
-// SensorPanel.vue - Attractive Design
+// SensorPanel.vue - Attractive Design (Updated)
 <script setup>
 import logo from '@/assets/Logo.svg'
 
@@ -31,8 +31,8 @@ const emit = defineEmits(['refresh'])
             <img :src="logo" alt="Logo" width="40" height="40" class="d-block"/>
           </div>
           <div>
-            <h5 class="text-white fw-bold mb-1">{{ title }}</h5>
-            <span class="badge bg-primary bg-opacity-50 text-white">
+            <h5 class="text-white fw-bold mb-1">Weather Station</h5>
+            <span class="badge bg-primary bg-opacity-50 text-white px-3 py-2">
               <i class="bi bi-broadcast-pin me-1"></i>
               {{ deviceId }}
             </span>
@@ -51,8 +51,8 @@ const emit = defineEmits(['refresh'])
 
       <!-- Timestamp -->
       <div class="text-white-50 small mb-4 d-flex align-items-center gap-2">
-        <i class="bi bi-clock"></i>
-        <span>Last updated: {{ observedAt }}</span>
+        <i class="bi bi-clock-history"></i>
+        <span>{{ observedAt }}</span>
       </div>
 
       <!-- Weather Metrics Grid -->
@@ -62,10 +62,10 @@ const emit = defineEmits(['refresh'])
           <div class="metric-card bg-gradient text-white p-4 rounded-4 border border-danger border-opacity-25" 
                style="background: linear-gradient(135deg, #dc3545 0%, #fd7e14 100%);">
             <div class="d-flex justify-content-between align-items-start">
-              <div>
+              <div class="flex-grow-1">
                 <div class="d-flex align-items-center gap-2 mb-2">
                   <i class="bi bi-thermometer-half fs-4"></i>
-                  <span class="text-white-50 small text-uppercase fw-semibold">Temperature</span>
+                  <span class="text-white-50 small text-uppercase fw-semibold letter-spacing">Temperature</span>
                 </div>
                 <div class="display-4 fw-bold">
                   {{ formatValue(temperature, '°C') }}
@@ -83,10 +83,10 @@ const emit = defineEmits(['refresh'])
           <div class="metric-card bg-gradient text-white p-4 rounded-4 border border-info border-opacity-25" 
                style="background: linear-gradient(135deg, #0dcaf0 0%, #0d6efd 100%);">
             <div class="d-flex justify-content-between align-items-start">
-              <div>
+              <div class="flex-grow-1">
                 <div class="d-flex align-items-center gap-2 mb-2">
                   <i class="bi bi-droplet-half fs-5"></i>
-                  <span class="text-white-50 small text-uppercase fw-semibold">Humidity</span>
+                  <span class="text-white-50 small text-uppercase fw-semibold letter-spacing">Humidity</span>
                 </div>
                 <div class="display-6 fw-bold">
                   {{ formatValue(humidity, '%') }}
@@ -104,10 +104,10 @@ const emit = defineEmits(['refresh'])
           <div class="metric-card bg-gradient text-white p-4 rounded-4 border border-success border-opacity-25" 
                style="background: linear-gradient(135deg, #20c997 0%, #198754 100%);">
             <div class="d-flex justify-content-between align-items-start">
-              <div>
+              <div class="flex-grow-1">
                 <div class="d-flex align-items-center gap-2 mb-2">
                   <i class="bi bi-speedometer2 fs-5"></i>
-                  <span class="text-white-50 small text-uppercase fw-semibold">Pressure</span>
+                  <span class="text-white-50 small text-uppercase fw-semibold letter-spacing">Pressure</span>
                 </div>
                 <div class="display-6 fw-bold">
                   {{ formatValue(pressure, 'hPa') }}
@@ -123,18 +123,24 @@ const emit = defineEmits(['refresh'])
 
       <!-- Loading State -->
       <div v-if="loading" class="mt-4">
-        <div class="d-flex align-items-center gap-2 text-primary">
+        <div class="d-flex align-items-center justify-content-center gap-2 text-primary bg-primary bg-opacity-10 rounded-3 py-3">
           <div class="spinner-border spinner-border-sm" role="status">
             <span class="visually-hidden">Loading...</span>
           </div>
-          <span class="small">Updating data...</span>
+          <span class="small fw-semibold">Updating data...</span>
         </div>
       </div>
 
       <!-- Error State -->
       <div v-if="error" class="alert alert-danger alert-dismissible fade show mt-4 mb-0" role="alert">
-        <i class="bi bi-exclamation-triangle me-2"></i>
-        <strong>Error:</strong> {{ error }}
+        <div class="d-flex align-items-center">
+          <i class="bi bi-exclamation-triangle-fill fs-5 me-2"></i>
+          <div>
+            <strong>Error Loading Data</strong>
+            <p class="mb-0 small mt-1">{{ error }}</p>
+          </div>
+        </div>
+        <button type="button" class="btn-close" @click="$emit('refresh')" aria-label="Retry"></button>
       </div>
     </div>
   </div>
@@ -144,6 +150,19 @@ const emit = defineEmits(['refresh'])
 .metric-card {
   transition: transform 0.3s ease, box-shadow 0.3s ease;
   cursor: default;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(45deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 100%);
+  pointer-events: none;
 }
 
 .metric-card:hover {
@@ -155,6 +174,10 @@ const emit = defineEmits(['refresh'])
   line-height: 1;
 }
 
+.letter-spacing {
+  letter-spacing: 0.05em;
+}
+
 @keyframes spinner {
   to {
     transform: rotate(360deg);
@@ -163,12 +186,25 @@ const emit = defineEmits(['refresh'])
 
 .spinner {
   animation: spinner 1s linear infinite;
+  display: inline-block;
 }
 
 /* Glassmorphism effect for cards */
 .card {
   backdrop-filter: blur(10px);
   background: rgba(33, 37, 41, 0.95) !important;
+  transition: transform 0.2s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+}
+
+/* Badge styling */
+.badge {
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 /* Responsive font sizes */
@@ -180,5 +216,20 @@ const emit = defineEmits(['refresh'])
   .display-6 {
     font-size: 1.75rem;
   }
+  
+  .metric-card {
+    padding: 1rem !important;
+  }
+}
+
+/* Loading state styling */
+.bg-primary.bg-opacity-10 {
+  backdrop-filter: blur(5px);
+}
+
+/* Alert improvements */
+.alert {
+  border-radius: 0.75rem;
+  border: none;
 }
 </style>
