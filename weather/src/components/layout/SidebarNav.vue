@@ -1,4 +1,9 @@
+// Sidebar.vue - Updated with Navigation
 <script setup>
+import { defineEmits } from 'vue'
+
+const emit = defineEmits(['navigate'])
+
 const items = [
   { key: 'upload', title: 'Load' },
   { key: 'chart', title: 'Charts' },
@@ -28,6 +33,7 @@ const items = [
       <button
         v-for="it in items"
         :key="it.key"
+        @click="emit('navigate', it.key)"
         class="btn btn-outline-light p-0 d-flex align-items-center justify-content-center rounded-3"
         style="width:44px;height:44px; border-color: rgba(255,255,255,.10);"
         :title="it.title"
@@ -56,12 +62,22 @@ const items = [
     </div>
 
     <div class="mt-auto pb-3 d-flex flex-column gap-2 align-items-center">
-      <button class="btn btn-outline-light rounded-3 p-0"
-              style="width:34px;height:34px;border-color: rgba(255,255,255,.12);"
-              title="Help">?</button>
-      <button class="btn btn-outline-light rounded-3 p-0"
-              style="width:34px;height:34px;border-color: rgba(255,255,255,.12);"
-              title="Docs">⟂</button>
+      <button 
+        @click="emit('navigate', 'help')"
+        class="btn btn-outline-light rounded-3 p-0"
+        style="width:34px;height:34px;border-color: rgba(255,255,255,.12);"
+        title="Help"
+      >
+        ?
+      </button>
+      <button 
+        @click="emit('navigate', 'docs')"
+        class="btn btn-outline-light rounded-3 p-0"
+        style="width:34px;height:34px;border-color: rgba(255,255,255,.12);"
+        title="Docs"
+      >
+        ⟂
+      </button>
     </div>
   </aside>
 </template>

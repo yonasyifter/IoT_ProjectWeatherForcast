@@ -4,14 +4,6 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import AppShell from '../components/layout/AppShell.vue'
 import SensorPanel from '../components/sensors/SensorPanel.vue'
 
-const tabs = [
-  { key: 'sources', label: 'SOURCES' },
-  { key: 'buckets', label: 'BUCKETS' },
-  { key: 'telegraph', label: 'TELEGRAPH' },
-  { key: 'api', label: 'API TOKENS' },
-]
-const activeTab = ref('buckets')
-
 const devices = ref([]) // Array to store all device readings
 const error = ref('')
 const loading = ref(false)
@@ -188,7 +180,7 @@ onUnmounted(() => {
 
     <!-- Loading State -->
     <div v-if="loading && devices.length === 0" class="text-center py-5">
-      <div class="spinner-border text-primary" role="status">
+      <div class="spinner-border text-secondary" role="status">
         <span class="visually-hidden">Loading...</span>
       </div>
       <p class="text-secondary mt-3">Loading device data...</p>

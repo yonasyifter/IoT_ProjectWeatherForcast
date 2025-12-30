@@ -7,6 +7,10 @@ import WeatherPage from './pages/WeatherPage.vue'
 import HelpPage from './pages/HelpPage.vue'
 import DocsPage from './pages/DocsPage.vue'
 import Sidebar from './components/layout/SidebarNav.vue' // Adjust path as needed
+import ChartPage from './components/SideNavEffect/ChartPage.vue'
+import GearPage from './components/SideNavEffect/GearPage.vue'
+import GridPage from './components/SideNavEffect/GridPage.vue'
+import UploadPage from './components/SideNavEffect/UploadPage.vue'
 
 const currentPage = ref('dashboard')
 
@@ -25,7 +29,7 @@ function navigateTo(page) {
       <!-- Top Navigation -->
       <nav class="navbar navbar-dark bg-dark border-bottom">
         <div class="container-fluid">
-          <span class="navbar-brand mb-0 h5">
+          <span class="navbar-brand mb-1 h4">
             <i class="bi bi-cloud-sun-fill me-2"></i>
             IOT-Smart Park
           </span>
@@ -75,6 +79,10 @@ function navigateTo(page) {
       <GroupMembersPage v-if="currentPage === 'members'" />
       <HelpPage v-if="currentPage === 'help'" />
       <DocsPage v-if="currentPage === 'docs'" />
+      <ChartPage v-if="currentPage === 'chart'" />
+      <GearPage v-if="currentPage === 'gear'" />
+      <GridPage v-if="currentPage === 'grid'" />
+      <UploadPage v-if="currentPage === 'upload'" />
     </div>
   </div>
 </template>

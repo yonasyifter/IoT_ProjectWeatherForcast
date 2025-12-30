@@ -31,7 +31,7 @@ const emit = defineEmits(['refresh'])
             <img :src="logo" alt="Logo" width="40" height="40" class="d-block"/>
           </div>
           <div>
-            <h5 class="text-white fw-bold mb-1">Weather Station</h5>
+            <h5 class="text-white fw-bold mb-1">Weather Station Robustel {{ deviceId }}</h5>
             <span class="badge bg-primary bg-opacity-50 text-white px-3 py-2">
               <i class="bi bi-broadcast-pin me-1"></i>
               {{ deviceId }}

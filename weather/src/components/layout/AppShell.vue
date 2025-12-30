@@ -19,7 +19,7 @@ const emit = defineEmits(['update:activeTab'])
     data-bs-theme="dark"
     style="background: radial-gradient(1200px 600px at 30% 0%, #0b0f1f 0%, #07070e 55%);"
   >
-    <SidebarNav />
+    <!-- <SidebarNav /> -->
 
     <div class="text-primary flex-grow-1 d-flex flex-column" style="min-width:0;">
       <TopHeader
