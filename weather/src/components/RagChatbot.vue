@@ -1,577 +1,422 @@
-// RagChatbot.vue - RAG-based Chatbot Component
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount } from "vue";
 
-const isOpen = ref(false)
-const isMinimized = ref(false)
-const isMaximized = ref(false)
-const messages = ref([])
-const userInput = ref('')
-const loading = ref(false)
-const deviceContext = ref([])
+const isOpen = ref(false);
+const messages = ref([]);
+const userInput = ref("");
+const loading = ref(false);
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const deviceContext = ref([]);
+const contextLoading = ref(false);
+const contextError = ref("");
+const lastContextAt = ref(null);
 
-// Fetch device data for RAG context
-async function fetchDeviceContext() {
-  try {
-    const res = await fetch(`${API_BASE}/api/weather/forecast/?minutes=1440`) // Last 24 hours
-    if (!res.ok) throw new Error('Failed to fetch device data')
-    const data = await res.json()
-    deviceContext.value = data
-    return data
-  } catch (e) {
-    console.error('Error fetching device context:', e)
-    deviceContext.value = []
-    return []
-  }
+// Audio
+const isRecording = ref(false);
+const recorderMime = ref("");
+let mediaRecorder = null;
+let mediaStream = null;
+let audioChunks = [];
+
+// DOM refs
+const messagesEl = ref(null);
+
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+
+/** ---------- Helpers ---------- */
+function nowTime() {
+  return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
-
-// Build context from database for RAG
-function buildContext() {
-  if (deviceContext.value.length === 0) {
-    return "No device data available in the database."
-  }
-  
-  // Group by device and get latest readings
-  const deviceMap = new Map()
-  deviceContext.value.forEach(reading => {
-    const deviceId = reading.device_id || 'unknown'
-    if (!deviceMap.has(deviceId) || new Date(reading.time) > new Date(deviceMap.get(deviceId).time)) {
-      deviceMap.set(deviceId, reading)
-    }
-  })
-  
-  let context = "Available IoT Weather Devices and Current Readings:\n\n"
-  deviceMap.forEach((reading, deviceId) => {
-    context += `Device ID: ${deviceId}\n`
-    context += `- Temperature: ${reading.temperature}°C\n`
-    context += `- Humidity: ${reading.humidity}%\n`
-    context += `- Pressure: ${reading.pressure} hPa\n`
-    context += `- Last Updated: ${new Date(reading.time).toLocaleString()}\n\n`
-  })
-  
-  return context
+function uid() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
-
-// Send message to RAG LLM API
-async function sendMessage() {
-  if (!userInput.value.trim()) return
-  
-  const userMessage = userInput.value.trim()
+function pushMessage(role, content, extra = {}) {
   messages.value.push({
-    role: 'user',
-    content: userMessage,
-    timestamp: new Date().toLocaleTimeString()
-  })
-  
-  userInput.value = ''
-  loading.value = true
-  
+    id: uid(),
+    role,
+    content,
+    timestamp: nowTime(),
+    ...extra, // transcript, error, etc
+  });
+}
+async function scrollToBottom() {
+  await nextTick();
+  if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
+}
+
+const sensorReady = computed(() => Array.isArray(deviceContext.value) && deviceContext.value.length > 0);
+const canSend = computed(() => !loading.value && (userInput.value.trim().length > 0) && sensorReady.value);
+
+/** ---------- Fetch sensors ---------- */
+async function fetchDeviceContext() {
+  contextLoading.value = true;
+  contextError.value = "";
+
   try {
-    // Fetch latest device data
-    await fetchDeviceContext()
-    
-    // Build context from database
-    const context = buildContext()
-    
-    // Create RAG prompt
-    const ragPrompt = `You are an IoT weather monitoring assistant. You have access to the following device data from the database:
+    const res = await fetch(`${API_BASE}/api/weather/forecast/?minutes=60`);
+    if (!res.ok) throw new Error(`Sensor API failed (${res.status})`);
+    const data = await res.json();
 
-${context}
-
-IMPORTANT INSTRUCTIONS:
-- Only answer questions using the data provided above from the database.
-- If the user asks about information not present in the database, respond with: "I don't have any information about that in the current database."
-- Be concise and specific when referencing device IDs and their readings.
-- Format temperature in Celsius, humidity as percentage, and pressure in hPa.
-- Do not make up or assume any data that is not explicitly provided above.
-
-User Question: ${userMessage}
-
-Answer based only on the database information provided above:`
-
-    // Call your RAG LLM API endpoint
-    const response = await fetch(`${API_BASE}/api/rag/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        prompt: ragPrompt,
-        context: context,
-        user_query: userMessage
-      })
-    })
-    
-    if (!response.ok) {
-      throw new Error('RAG API request failed')
-    }
-    
-    const data = await response.json()
-    const botResponse = data.response || data.answer || "I don't have any information about that in the current database."
-    
-    messages.value.push({
-      role: 'assistant',
-      content: botResponse,
-      timestamp: new Date().toLocaleTimeString()
-    })
-    
-  } catch (error) {
-    console.error('Error calling RAG API:', error)
-    messages.value.push({
-      role: 'assistant',
-      content: "I don't have any information about that in the current database.",
-      timestamp: new Date().toLocaleTimeString()
-    })
+    deviceContext.value = data;
+    lastContextAt.value = new Date();
+    return data;
+  } catch (e) {
+    console.error("Database Error:", e);
+    contextError.value = "Could not load sensor data.";
+    deviceContext.value = [];
+    return [];
   } finally {
-    loading.value = false
-    await nextTick()
-    scrollToBottom()
+    contextLoading.value = false;
   }
 }
 
-function scrollToBottom() {
-  const chatContainer = document.getElementById('chat-messages')
-  if (chatContainer) {
-    chatContainer.scrollTop = chatContainer.scrollHeight
+/** ---------- Backend call (ALWAYS multipart/form-data) ---------- */
+async function callRag({ text, audioFileOrBlob }) {
+  // Ensure we have fresh-ish context (you can change the refresh behavior if you like)
+  const currentData = await fetchDeviceContext();
+  if (!Array.isArray(currentData) || currentData.length === 0) {
+    throw new Error("Missing device_data (sensor rows). Cannot send to RAG.");
   }
+
+  const formData = new FormData();
+  formData.append("device_data", JSON.stringify(currentData));
+
+  if (text && text.trim().length) formData.append("user_query", text.trim());
+
+  if (audioFileOrBlob) {
+    // If it’s a Blob, give it a filename so FastAPI sees it as UploadFile nicely
+    if (audioFileOrBlob instanceof Blob && !(audioFileOrBlob instanceof File)) {
+      const ext =
+        recorderMime.value.includes("ogg") ? "ogg" :
+        recorderMime.value.includes("webm") ? "webm" : "bin";
+      formData.append("audio_file", audioFileOrBlob, `recording.${ext}`);
+    } else {
+      formData.append("audio_file", audioFileOrBlob);
+    }
+  }
+
+  const res = await fetch(`${API_BASE}/api/rag/chat`, {
+    method: "POST",
+    body: formData, // ✅ do NOT set Content-Type manually
+  });
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    data = { response: "Server returned a non-JSON response." };
+  }
+
+  if (!res.ok) {
+    const detail = data?.detail ? JSON.stringify(data.detail) : "Unknown server error";
+    throw new Error(`RAG API error (${res.status}): ${detail}`);
+  }
+
+  // Support both backend formats:
+  // - new: { transcript, answer }
+  // - old: { response }
+  const transcript = data?.transcript ?? "";
+  const answer = data?.answer ?? data?.response ?? "";
+
+  return { transcript, answer };
+}
+
+/** ---------- Text send ---------- */
+async function sendMessage() {
+  const text = userInput.value.trim();
+  if (!text) return;
+
+  pushMessage("user", text);
+  userInput.value = "";
+  loading.value = true;
+
+  try {
+    const { transcript, answer } = await callRag({ text });
+    pushMessage("assistant", answer || "(empty response)", { transcript });
+  } catch (e) {
+    pushMessage("assistant", "Offline: Could not reach the server or the model.", {
+      error: String(e?.message || e),
+    });
+  } finally {
+    loading.value = false;
+    await scrollToBottom();
+  }
+}
+
+/** ---------- Recording (press & hold) ---------- */
+function pickBestMimeType() {
+  // Prefer OGG/Opus if supported; otherwise default will likely be webm/opus
+  const candidates = ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/webm"];
+  for (const c of candidates) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return ""; // let browser decide
+}
+
+async function startRecording() {
+  if (isRecording.value || loading.value) return;
+
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    const mime = pickBestMimeType();
+    recorderMime.value = mime || "audio/webm";
+
+    mediaRecorder = mime
+      ? new MediaRecorder(mediaStream, { mimeType: mime })
+      : new MediaRecorder(mediaStream);
+
+    audioChunks = [];
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.start();
+    isRecording.value = true;
+  } catch (e) {
+    console.error(e);
+    pushMessage("assistant", "Mic permission denied or recording failed.", { error: String(e?.message || e) });
+    isRecording.value = false;
+    cleanupMedia();
+    await scrollToBottom();
+  }
+}
+
+async function stopRecording() {
+  if (!isRecording.value || !mediaRecorder) return;
+
+  isRecording.value = false;
+
+  const stopped = new Promise((resolve) => {
+    mediaRecorder.onstop = resolve;
+  });
+
+  try {
+    mediaRecorder.stop();
+    await stopped;
+  } catch {}
+
+  try {
+    const blobType = recorderMime.value || audioChunks[0]?.type || "audio/webm";
+    const audioBlob = new Blob(audioChunks, { type: blobType });
+
+    // Show user bubble
+    pushMessage("user", isWebm(blobType) ? "(sent voice message — webm)" : "(sent voice message)");
+    loading.value = true;
+
+    const { transcript, answer } = await callRag({ audioFileOrBlob: audioBlob });
+    pushMessage("assistant", answer || "(empty response)", { transcript });
+
+  } catch (e) {
+    pushMessage("assistant", "Offline: Could not reach the server or the model.", {
+      error: String(e?.message || e),
+    });
+  } finally {
+    loading.value = false;
+    cleanupMedia();
+    await scrollToBottom();
+  }
+}
+
+function isWebm(mime) {
+  return (mime || "").toLowerCase().includes("webm");
+}
+
+function cleanupMedia() {
+  try {
+    if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
+  } catch {}
+  mediaStream = null;
+  mediaRecorder = null;
+  audioChunks = [];
+}
+
+/** Works on desktop + mobile */
+function onMicDown(e) {
+  e.preventDefault?.();
+  startRecording();
+}
+function onMicUp(e) {
+  e.preventDefault?.();
+  stopRecording();
 }
 
 function toggleChat() {
-  isOpen.value = !isOpen.value
-  if (isOpen.value) {
-    isMinimized.value = false
-    fetchDeviceContext()
-    if (messages.value.length === 0) {
-      messages.value.push({
-        role: 'assistant',
-        content: 'Hello! I\'m your IoT Weather Assistant. I can answer questions about the devices and weather data in our database. What would you like to know?',
-        timestamp: new Date().toLocaleTimeString()
-      })
-    }
-    nextTick(() => scrollToBottom())
+  isOpen.value = !isOpen.value;
+
+  if (isOpen.value && messages.value.length === 0) {
+    pushMessage("assistant", "Welcome to the Park! Ask me anything or hold the mic to speak.");
+    // prefetch sensor data when opening
+    fetchDeviceContext().finally(scrollToBottom);
   }
-}
-
-function minimizeChat() {
-  isMinimized.value = !isMinimized.value
-  if (isMinimized.value) {
-    isMaximized.value = false
-  }
-}
-
-function maximizeChat() {
-  isMaximized.value = !isMaximized.value
-  isMinimized.value = false
-}
-
-function closeChat() {
-  isOpen.value = false
-  isMinimized.value = false
-  isMaximized.value = false
 }
 
 function clearChat() {
-  messages.value = []
-  messages.value.push({
-    role: 'assistant',
-    content: 'Chat cleared. How can I help you with device data?',
-    timestamp: new Date().toLocaleTimeString()
-  })
+  messages.value = [];
+  pushMessage("assistant", "Chat cleared. Ask me anything or hold the mic to speak.");
+  scrollToBottom();
 }
 
-const chatContainerClass = computed(() => {
-  if (isMaximized.value) return 'chat-maximized'
-  if (isMinimized.value) return 'chat-minimized'
-  return 'chat-normal'
-})
+onBeforeUnmount(() => cleanupMedia());
 </script>
 
 <template>
-  <div>
-    <!-- Floating Action Button -->
-  <button 
-    v-if="!isOpen"
-    class="chat-fab btn btn-primary rounded-circle shadow-lg"
-    @click="toggleChat"
-    title="Open RAG Chatbot"
-  >
-    <i class="bi bi-chat-dots-fill fs-4"></i>
-  </button>
+  <div class="rag-wrapper">
+    <!-- Floating button -->
+    <button
+      v-if="!isOpen"
+      class="chat-fab btn btn-primary rounded-circle shadow-lg d-flex align-items-center justify-content-center"
+      @click="toggleChat"
+      aria-label="Open chat"
+    >
+      <i class="bi bi-robot fs-1"></i>
+    </button>
 
-  <!-- Chat Window -->
-  <div
-    v-if="isOpen"
-    :class="['chat-container', chatContainerClass, 'shadow-lg']"
-  >
-    <!-- Chat Header -->
-    <div class="chat-header bg-primary text-white d-flex align-items-center justify-content-between p-3">
-      <div class="d-flex align-items-center">
-        <i class="bi bi-robot fs-4 me-2"></i>
-        <div>
-          <h6 class="mb-0">IoT Weather Assistant</h6>
-          <small class="opacity-75">RAG-powered chatbot</small>
+    <!-- Chat window -->
+    <div v-if="isOpen" class="chat-container card shadow-lg border-0">
+      <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center py-3">
+        <div class="d-flex flex-column">
+          <h6 class="mb-0">
+            <i class="bi bi-robot me-2"></i> Park AI Assistant
+          </h6>
+          <small class="opacity-75">
+            Sensors:
+            <span v-if="contextLoading" class="ms-1">loading…</span>
+            <span v-else-if="sensorReady" class="ms-1">OK ({{ deviceContext.length }})</span>
+            <span v-else class="ms-1">missing</span>
+            <span v-if="lastContextAt" class="ms-2">• {{ lastContextAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }}</span>
+          </small>
+        </div>
+
+        <div class="d-flex gap-2 align-items-center">
+          <button class="btn btn-sm btn-light" @click="clearChat" title="Clear chat">
+            <i class="bi bi-trash"></i>
+          </button>
+          <button class="btn-close btn-close-white" @click="isOpen = false" aria-label="Close"></button>
         </div>
       </div>
-      <div class="d-flex gap-2">
-        <button 
-          class="btn btn-sm btn-outline-light border-0"
-          @click="minimizeChat"
-          title="Minimize"
-        >
-          <i class="bi bi-dash-lg"></i>
-        </button>
-        <button 
-          class="btn btn-sm btn-outline-light border-0"
-          @click="maximizeChat"
-          title="Maximize/Restore"
-        >
-          <i :class="isMaximized ? 'bi bi-fullscreen-exit' : 'bi bi-fullscreen'"></i>
-        </button>
-        <button 
-          class="btn btn-sm btn-outline-light border-0"
-          @click="closeChat"
-          title="Close"
-        >
-          <i class="bi bi-x-lg"></i>
-        </button>
-      </div>
-    </div>
 
-    <!-- Chat Body -->
-    <div v-if="!isMinimized" class="chat-body">
-      <!-- Messages Area -->
-      <div id="chat-messages" class="chat-messages p-3">
-        <div 
-          v-for="(message, index) in messages" 
-          :key="index"
-          :class="['message-bubble', message.role === 'user' ? 'user-message' : 'assistant-message']"
+      <div ref="messagesEl" class="card-body chat-messages p-3 bg-light">
+        <div
+          v-for="m in messages"
+          :key="m.id"
+          :class="['d-flex mb-3', m.role === 'user' ? 'justify-content-end' : 'justify-content-start']"
         >
-          <div class="message-content">
-            <div class="message-text">{{ message.content }}</div>
-            <small class="message-time">{{ message.timestamp }}</small>
-          </div>
-        </div>
-        
-        <!-- Loading Indicator -->
-        <div v-if="loading" class="message-bubble assistant-message">
-          <div class="message-content">
-            <div class="typing-indicator">
-              <span></span>
-              <span></span>
-              <span></span>
+          <div
+            :class="[
+              'p-3 rounded-4 shadow-sm max-w-75',
+              m.role === 'user' ? 'bg-primary text-white' : 'bg-white text-dark border'
+            ]"
+          >
+            <div class="small opacity-75 mb-1 d-flex justify-content-between gap-3">
+              <span>{{ m.role === 'user' ? 'You' : 'Assistant' }}</span>
+              <span>{{ m.timestamp }}</span>
+            </div>
+
+            <div>{{ m.content }}</div>
+
+            <!-- transcript (if returned by backend) -->
+            <details v-if="m.transcript" class="mt-2">
+              <summary class="small">Transcript</summary>
+              <pre class="transcript-box mt-2 mb-0">{{ m.transcript }}</pre>
+            </details>
+
+            <!-- error (if any) -->
+            <div v-if="m.error" class="mt-2 small text-danger">
+              {{ m.error }}
             </div>
           </div>
         </div>
+
+        <div v-if="loading" class="text-muted small fst-italic">
+          <span class="spinner-grow spinner-grow-sm me-2"></span> Gemini is thinking...
+        </div>
+
+        <div v-if="contextError" class="text-danger small mt-2">
+          {{ contextError }}
+        </div>
+
+        <div v-if="recorderMime && recorderMime.includes('webm')" class="text-warning small mt-2">
+          ⚠️ Recording format is <code>{{ recorderMime }}</code>. If your backend/model rejects it, prefer uploading/recording OGG or WAV.
+        </div>
       </div>
 
-      <!-- Input Area -->
-      <div class="chat-input border-top p-3">
-        <div class="d-flex gap-2 mb-2">
-          <button 
-            class="btn btn-sm btn-outline-secondary"
-            @click="clearChat"
-            title="Clear chat"
-          >
-            <i class="bi bi-trash"></i> Clear
-          </button>
-          <button 
-            class="btn btn-sm btn-outline-primary"
-            @click="fetchDeviceContext"
-            title="Refresh device data"
-          >
-            <i class="bi bi-arrow-clockwise"></i> Refresh Data
-          </button>
-          <small class="text-muted ms-auto align-self-center">
-            {{ deviceContext.length }} readings loaded
-          </small>
-        </div>
+      <div class="card-footer bg-white border-top-0 p-3">
         <div class="input-group">
-          <input 
+          <!-- Mic: press and hold (pointer events work for mouse + touch) -->
+          <button
+            class="btn btn-outline-secondary"
+            :class="{ 'btn-danger text-white': isRecording }"
+            @pointerdown="onMicDown"
+            @pointerup="onMicUp"
+            @pointercancel="onMicUp"
+            @pointerleave="onMicUp"
+            :disabled="loading"
+            title="Hold to speak"
+          >
+            <i class="bi" :class="isRecording ? 'bi-mic-fill' : 'bi-mic'"></i>
+          </button>
+
+          <input
             v-model="userInput"
             @keyup.enter="sendMessage"
-            type="text"
-            class="form-control"
-            placeholder="Ask about devices, temperature, humidity..."
+            class="form-control border-start-0"
+            placeholder="Ask about the weather..."
             :disabled="loading"
           />
-          <button 
-            class="btn btn-primary"
-            @click="sendMessage"
-            :disabled="loading || !userInput.trim()"
-          >
+
+          <button class="btn btn-primary px-3" @click="sendMessage" :disabled="loading || !sensorReady || !userInput.trim()">
             <i class="bi bi-send-fill"></i>
           </button>
         </div>
-        <small class="text-muted d-block mt-2">
-          <i class="bi bi-info-circle"></i> I only answer questions based on data in our database
-        </small>
+
+        <div v-if="!sensorReady && !contextLoading" class="small text-warning mt-2">
+          ⚠️ Sensor data (<code>device_data</code>) is required by FastAPI. Click open again or ensure <code>/api/weather/forecast</code> works.
+        </div>
       </div>
     </div>
-
-    <!-- Minimized Preview -->
-    <div v-else class="chat-minimized-preview p-2 text-center bg-light" @click="minimizeChat">
-      <small class="text-muted">{{ messages.length }} messages - Click to expand</small>
-    </div>
-  </div>
   </div>
 </template>
 
 <style scoped>
-/* Floating Action Button */
 .chat-fab {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
-  width: 64px;
-  height: 64px;
-  z-index: 1000;
-  transition: transform 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  bottom: 30px;
+  right: 30px;
+  width: 70px;
+  height: 70px;
+  z-index: 9999;
+  transition: transform 0.2s ease;
 }
+.chat-fab:hover { transform: scale(1.05); }
 
-.chat-fab:hover {
-  transform: scale(1.1);
-}
-
-/* Chat Container */
 .chat-container {
   position: fixed;
-  background: white;
-  border-radius: 12px;
+  bottom: 110px;
+  right: 30px;
+  width: 380px;
+  height: 550px;
+  z-index: 9999;
+  border-radius: 20px;
   overflow: hidden;
-  transition: all 0.3s ease;
-  z-index: 1050;
-  display: flex;
-  flex-direction: column;
-}
-
-.chat-normal {
-  bottom: 24px;
-  right: 24px;
-  width: 400px;
-  height: 600px;
-}
-
-.chat-minimized {
-  bottom: 24px;
-  right: 24px;
-  width: 300px;
-  height: auto;
-}
-
-.chat-maximized {
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw !important;
-  height: 100vh !important;
-  border-radius: 0;
-  margin: 0;
-}
-
-/* Chat Header */
-.chat-header {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  flex-shrink: 0;
-}
-
-.chat-header .btn {
-  padding: 0.25rem 0.5rem;
-}
-
-.chat-header .btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-/* Chat Body */
-.chat-body {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
 }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  background: #f8f9fa;
-  min-height: 0;
 }
 
-.chat-messages::-webkit-scrollbar {
-  width: 6px;
-}
+.max-w-75 { max-width: 80%; }
 
-.chat-messages::-webkit-scrollbar-track {
-  background: #f1f1f1;
-}
+.chat-messages::-webkit-scrollbar { width: 5px; }
+.chat-messages::-webkit-scrollbar-thumb { background: #dee2e6; border-radius: 10px; }
 
-.chat-messages::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 3px;
-}
-
-.chat-messages::-webkit-scrollbar-thumb:hover {
-  background: #555;
-}
-
-/* Message Bubbles */
-.message-bubble {
-  margin-bottom: 16px;
-  display: flex;
-  animation: fadeIn 0.3s ease;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.user-message {
-  justify-content: flex-end;
-}
-
-.assistant-message {
-  justify-content: flex-start;
-}
-
-.message-content {
-  max-width: 80%;
-  padding: 12px 16px;
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.user-message .message-content {
-  background: #0d6efd;
-  color: white;
-  border-bottom-right-radius: 4px;
-}
-
-.assistant-message .message-content {
-  background: white;
-  color: #212529;
-  border-bottom-left-radius: 4px;
-  border: 1px solid #e9ecef;
-}
-
-.message-text {
-  margin-bottom: 4px;
+.transcript-box {
+  background: #0b1020;
+  color: #e7e7e7;
+  padding: 10px;
+  border-radius: 10px;
+  overflow: auto;
   white-space: pre-wrap;
-  word-wrap: break-word;
-  line-height: 1.5;
-}
-
-.message-time {
-  font-size: 0.7rem;
-  opacity: 0.7;
-  display: block;
-}
-
-.user-message .message-time {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-.assistant-message .message-time {
-  color: #6c757d;
-}
-
-/* Typing Indicator */
-.typing-indicator {
-  display: flex;
-  gap: 4px;
-  padding: 8px 0;
-}
-
-.typing-indicator span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #6c757d;
-  animation: typing 1.4s infinite;
-}
-
-.typing-indicator span:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.typing-indicator span:nth-child(3) {
-  animation-delay: 0.4s;
-}
-
-@keyframes typing {
-  0%, 60%, 100% {
-    opacity: 0.3;
-    transform: translateY(0);
-  }
-  30% {
-    opacity: 1;
-    transform: translateY(-8px);
-  }
-}
-
-/* Chat Input */
-.chat-input {
-  background: white;
-  flex-shrink: 0;
-}
-
-.chat-input .form-control:focus {
-  border-color: #0d6efd;
-  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
-}
-
-/* Minimized Preview */
-.chat-minimized-preview {
-  cursor: pointer;
-}
-
-.chat-minimized-preview:hover {
-  background: #e9ecef !important;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .chat-normal {
-    width: calc(100vw - 48px);
-    height: calc(100vh - 100px);
-    bottom: 12px;
-    right: 12px;
-  }
-  
-  .chat-fab {
-    width: 56px;
-    height: 56px;
-    bottom: 16px;
-    right: 16px;
-  }
-  
-  .message-content {
-    max-width: 85%;
-  }
-}
-
-@media (max-width: 480px) {
-  .chat-normal {
-    width: calc(100vw - 24px);
-    height: calc(100vh - 80px);
-    bottom: 8px;
-    right: 8px;
-  }
-  
-  .message-content {
-    max-width: 90%;
-  }
 }
 </style>

@@ -47,6 +47,16 @@ async function loadLatest() {
           temperature: reading.temperature ?? '—',
           humidity: reading.humidity ?? '—',
           pressure: reading.pressure ?? '—',
+          light: reading.light ?? '—',
+          noise: reading.noise ?? '—',
+          tof: reading.tof ?? '—',
+          angle: reading.angle ?? '—',
+          accX: reading.accX ?? '—',
+          accY: reading.accY ?? '—',
+          accZ: reading.accZ ?? '—',
+          vibrAccX: reading.vibrAccX ?? '—',
+          vibrAccY: reading.vibrAccY ?? '—',
+          vibrAccZ: reading.vibrAccZ ?? '—',
           observedAt: reading.time ? new Date(reading.time).toLocaleString() : '—',
           timestamp: reading.time
         })
@@ -86,6 +96,16 @@ async function loadDeviceDetails(deviceId) {
       temperature: reading.temperature ?? '—',
       humidity: reading.humidity ?? '—',
       pressure: reading.pressure ?? '—',
+      light: reading.light ?? '—',
+      noise: reading.noise ?? '—',
+      tof: reading.tof ?? '—',
+      angle: reading.angle ?? '—',
+      accX: reading.accX ?? '—',
+      accY: reading.accY ?? '—',
+      accZ: reading.accZ ?? '—',
+      vibrAccX: reading.vibrAccX ?? '—',
+      vibrAccY: reading.vibrAccY ?? '—',
+      vibrAccZ: reading.vibrAccZ ?? '—',
       deviceId: reading.device_id
     })).reverse() // Most recent first
     
@@ -279,6 +299,17 @@ onUnmounted(() => {
           :temperature="device.temperature"
           :humidity="device.humidity"
           :pressure="device.pressure"
+          :light="device.light"
+          :noise="device.noise"
+          :tof="device.tof"
+          :angle="device.angle"
+          :accX="device.accX"
+          :accY="device.accY"
+          :accZ="device.accZ"
+          :vibrAccX="device.vibrAccX"
+          :vibrAccY="device.vibrAccY"
+          :vibrAccZ="device.vibrAccZ"
+
           :device-id="device.deviceId"
           :observed-at="device.observedAt"
           :loading="loading"
@@ -301,7 +332,8 @@ onUnmounted(() => {
     </div>
 
     <!-- RAG Chatbot Component -->
-    <RagChatbot />
+    <RagChatbot :deviceData="sensorRows" />
+
 
     <!-- Detail Modal -->
     <div 
@@ -352,6 +384,38 @@ onUnmounted(() => {
                       </strong>
                     </div>
                   </div>
+                  <div class="col-md-3">
+                    <div class="d-flex flex-column">
+                      <small class="text-secondary mb-1">Light</small>
+                      <strong class="fs-5 text-warning">
+                        {{ formatValue(selectedDevice?.light, 'lx') }}
+                      </strong>
+                    </div>
+                  </div>
+                  <div class="col-md-3">
+                    <div class="d-flex flex-column">
+                      <small class="text-secondary mb-1">Noise</small>
+                      <strong class="fs-5 text-info">
+                        {{ formatValue(selectedDevice?.noise, 'dB') }}
+                      </strong>
+                    </div>
+                  </div>
+                  <div class="col-md-3">
+                    <div class="d-flex flex-column">
+                      <small class="text-secondary mb-1">ToF</small>
+                      <strong class="fs-5 text-success">
+                        {{ formatValue(selectedDevice?.tof, 'cm') }}
+                      </strong>
+                    </div>
+                  </div>
+                  <div class="col-md-3">
+                    <div class="d-flex flex-column">
+                      <small class="text-secondary mb-1">Angle</small>
+                      <strong class="fs-5 text-primary">
+                        {{ formatValue(selectedDevice?.angle, 'deg') }}
+                      </strong>
+                    </div>
+                  </div>
                 </div>
                 <div class="mt-3 pt-3 border-top border-secondary">
                   <small class="text-secondary">Last Updated:</small>
@@ -394,6 +458,10 @@ onUnmounted(() => {
                         <th>Temperature</th>
                         <th>Humidity</th>
                         <th>Pressure</th>
+                        <th>Light</th>
+                        <th>Noise</th>
+                        <th>ToF</th>
+                        <th>Angle</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -402,6 +470,10 @@ onUnmounted(() => {
                         <td class="text-warning">{{ formatValue(reading.temperature, '°C') }}</td>
                         <td class="text-info">{{ formatValue(reading.humidity, '%') }}</td>
                         <td class="text-success">{{ formatValue(reading.pressure, 'hPa') }}</td>
+                        <td class="text-warning">{{ formatValue(reading.light, 'lx') }}</td>
+                        <td class="text-info">{{ formatValue(reading.noise, 'dB') }}</td>
+                        <td class="text-success">{{ formatValue(reading.tof, 'cm') }}</td>
+                        <td class="text-primary">{{ formatValue(reading.angle, 'deg') }}</td>
                       </tr>
                     </tbody>
                   </table>

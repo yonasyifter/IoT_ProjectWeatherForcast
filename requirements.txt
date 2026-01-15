@@ -3,3 +3,4 @@ uvicorn[standard]
 influxdb-client
 python-dotenv
 pydantic
+google-generativeai
