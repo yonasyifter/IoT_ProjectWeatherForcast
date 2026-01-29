@@ -1,0 +1,643 @@
+{
+	"__inputs": [
+		{
+			"name": "DS_INFLUXDB",
+			"label": "InfluxDB",
+			"description": "Please select data source",
+			"type": "datasource",
+			"pluginId": "influxdb",
+			"pluginName": "InfluxDB"
+		}
+	],
+	"__requires": [
+		{
+			"type": "grafana",
+			"id": "grafana",
+			"name": "Grafana",
+			"version": "11.1.4"
+		},
+		{
+			"type": "datasource",
+			"id": "influxdb",
+			"name": "InfluxDB",
+			"version": "2.7.8"
+		}
+	],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 2,
+        "x": 0,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "addAllIDs": false,
+        "captureMappings": true,
+        "eventSource": "let values = data.series[0].fields[1].values;\r\nlet lastValue = values[values.length - 1];\r\nlet minV = 0;\r\nlet maxV = 100;\r\nlastValue = Math.min(lastValue, maxV);\r\nlastValue = Math.max(lastValue, minV);\r\nlet top = svgmap.thermometer.y();\r\nlet bottom = svgmap.thermometer.height() + top;\r\nlet totalHeight = svgmap.rectpipe.height();\r\nlet waterHeight = (lastValue / (maxV - minV)) * totalHeight;\r\nlet newTop = bottom - waterHeight;\r\n\r\nsvgmap.thermometer.animateOn(1000, true, (elem) => {\r\n    elem.ease(\"<>\").y(newTop).height(waterHeight)\r\n    \r\n});\r\n\r\nsvgmap.tempdisp.animateOn(1000, true, (elem) => {\r\n    svgmap.tempdisp.text(`${lastValue.toFixed(1)}°C`)\r\n    elem.ease(\"<>\").y(newTop);\r\n});",
+        "initSource": "",
+        "svgMappings": [
+          {
+            "mappedName": "thermometer",
+            "svgId": "thermometer"
+          },
+          {
+            "mappedName": "",
+            "svgId": "text1"
+          },
+          {
+            "mappedName": "",
+            "svgId": "text2"
+          },
+          {
+            "mappedName": "tempdisp",
+            "svgId": "tempdisp"
+          },
+          {
+            "mappedName": "rectpipe",
+            "svgId": "rect1"
+          }
+        ],
+        "svgSource": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\r\n<svg\r\n   width=\"150\"\r\n   height=\"300\"\r\n   version=\"1.1\"\r\n   id=\"svg3\"\r\n   sodipodi:docname=\"newt.svg\"\r\n   inkscape:version=\"1.3.2 (091e20e, 2023-11-25, custom)\"\r\n   xmlns:inkscape=\"http://www.inkscape.org/namespaces/inkscape\"\r\n   xmlns:sodipodi=\"http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd\"\r\n   xmlns=\"http://www.w3.org/2000/svg\"\r\n   xmlns:svg=\"http://www.w3.org/2000/svg\">\r\n  <defs\r\n     id=\"defs3\" />\r\n  <sodipodi:namedview\r\n     id=\"namedview3\"\r\n     pagecolor=\"#ffffff\"\r\n     bordercolor=\"#000000\"\r\n     borderopacity=\"0.25\"\r\n     inkscape:showpageshadow=\"2\"\r\n     inkscape:pageopacity=\"0.0\"\r\n     inkscape:pagecheckerboard=\"0\"\r\n     inkscape:deskcolor=\"#d1d1d1\"\r\n     showgrid=\"false\"\r\n     inkscape:zoom=\"2.71\"\r\n     inkscape:cx=\"50\"\r\n     inkscape:cy=\"150\"\r\n     inkscape:window-width=\"1920\"\r\n     inkscape:window-height=\"1009\"\r\n     inkscape:window-x=\"-8\"\r\n     inkscape:window-y=\"-8\"\r\n     inkscape:window-maximized=\"1\"\r\n     inkscape:current-layer=\"svg3\" />\r\n  <rect\r\n     x=\"40\"\r\n     y=\"20\"\r\n     rx=\"10\"\r\n     width=\"20\"\r\n     height=\"260\"\r\n     fill=\"lightgray\"\r\n     stroke=\"black\"\r\n     stroke-width=\"2\"\r\n     id=\"rect1\" />\r\n  <circle\r\n     cx=\"50\"\r\n     cy=\"270\"\r\n     r=\"15\"\r\n     fill=\"#ff0000\"\r\n     stroke=\"#000000\"\r\n     stroke-width=\"2\"\r\n     id=\"circle1\" />\r\n  <rect\r\n     id=\"thermometer\"\r\n     x=\"41\"\r\n     y=\"141.91882\"\r\n     width=\"18\"\r\n     height=\"120\"\r\n     fill=\"#ff0000\" />\r\n  <text\r\n     x=\"-0.53505534\"\r\n     y=\"39.261993\"\r\n     font-size=\"12px\"\r\n     fill=\"#adadad\"\r\n     id=\"text1\">100°C</text>\r\n  <text\r\n     x=\"6.3099632\"\r\n     y=\"150.73801\"\r\n     font-size=\"12px\"\r\n     fill=\"#adadad\"\r\n     id=\"text2\">50°C</text>\r\n  <text\r\n     x=\"13.892989\"\r\n     y=\"260\"\r\n     font-size=\"12px\"\r\n     fill=\"#adadad\"\r\n     id=\"text3\">0°C</text>\r\n   <text\r\n     x=\"65\"\r\n     y=\"160\"\r\n     font-size=\"12px\"\r\n     fill=\"#dddddd\"\r\n     id=\"tempdisp\">20°C</text>  \r\n</svg>"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "query": "from(bucket: \"bucket\")\r\n  |> range(start: -1m)\r\n  |> filter(fn: (r) => r._measurement == \"S6000U_measurements\")\r\n  |> filter(fn: (r) => r._field == \"temperature\")",
+          "refId": "A"
+        }
+      ],
+      "title": "Temperature",
+      "type": "aceiot-svg-panel"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "orange",
+            "mode": "fixed",
+            "seriesBy": "last"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "humidity"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 18,
+        "x": 2,
+        "y": 0
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "timezone": [
+          ""
+        ],
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.1.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "query": "from(bucket: \"bucket\")\r\n  |> range(start: -3h)\r\n  |> filter(fn: (r) => r._measurement == \"S6000U_measurements\")\r\n  |> filter(fn: (r) => r._field =~ /temperature/ or r._field =~ /humidity/)\r\n  |> aggregateWindow(every: 1m, fn: mean)",
+          "refId": "A"
+        }
+      ],
+      "title": "Temperature & Humidity",
+      "transparent": true,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "11.1.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "query": "from(bucket: \"bucket\")\r\n  |> range(start: -1m)\r\n  |> filter(fn: (r) => r._measurement == \"S6000U_measurements\")\r\n  |> filter(fn: (r) => r._field =~ /humidity/)",
+          "refId": "A"
+        }
+      ],
+      "title": "Humidity",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd",
+            "seriesBy": "last"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": -1,
+            "drawStyle": "bars",
+            "fillOpacity": 100,
+            "gradientMode": "scheme",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 0,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "fieldMinMax": true,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "dB"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.1.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "query": "from(bucket: \"bucket\")\r\n  |> range(start: -3h)\r\n  |> filter(fn: (r) => r._measurement == \"S6000U_measurements\")\r\n  |> filter(fn: (r) => r._field =~ /noise/)\r\n  |> aggregateWindow(every: 1m, fn: mean)",
+          "refId": "A"
+        }
+      ],
+      "title": "Sound Level",
+      "transparent": true,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 8,
+        "y": 20
+      },
+      "id": 3,
+      "options": {
+        "addAllIDs": false,
+        "captureMappings": false,
+        "eventSource": "let values = data.series[0].fields[1].values;\r\nlet lastValue = values[values.length - 1];\r\nlet distance = lastValue;\r\n\r\nlet refX = svgmap.lineRef.x();\r\nlet s6000W = svgmap.s6000box.width();\r\nlet newPointX = refX - distance - s6000W - 24;\r\nnewPointX = Math.max(newPointX, 10);\r\nconsole.log(s6000W, distance, refX, newPointX);\r\n\r\nsvgmap.s6000.animateOn(1000, true, (elem) => {\r\n    svgmap.distanceVal.text(`${distance}cm`);\r\n    elem.ease(\"<>\").x(newPointX);\r\n})",
+        "initSource": "",
+        "svgMappings": [
+          {
+            "mappedName": "s6000",
+            "svgId": "s6000"
+          },
+          {
+            "mappedName": "lineRef",
+            "svgId": "path-28-ref"
+          },
+          {
+            "mappedName": "distanceVal",
+            "svgId": "text_distance"
+          },
+          {
+            "mappedName": "s6000box",
+            "svgId": "s6000box"
+          }
+        ],
+        "svgSource": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n<svg\n   version=\"1.1\"\n   width=\"300\"\n   height=\"300\"\n   id=\"svg145\"\n   sodipodi:docname=\"distance.svg\"\n   inkscape:version=\"1.3.2 (091e20e, 2023-11-25, custom)\"\n   xmlns:inkscape=\"http://www.inkscape.org/namespaces/inkscape\"\n   xmlns:sodipodi=\"http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd\"\n   xmlns=\"http://www.w3.org/2000/svg\"\n   xmlns:svg=\"http://www.w3.org/2000/svg\">\n  <text\n     x=\"260\"\n     y=\"200\"\n     font-size=\"16px\"\n     fill=\"#dddddd\"\n     id=\"text23-6\"\n     style=\"font-size:16px;stroke-width:0.853586\">Obstacle</text>\n  <path\n     style=\"fill:#666666;fill-opacity:0.917647;stroke:#666666;stroke-width:2;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1\"\n     d=\"m 248.39444,148.78322 v 50.57107 50.57107\"\n     id=\"path20\"\n     sodipodi:nodetypes=\"ccc\" />\n  <line\n     x1=\"248.23303\"\n     y1=\"156.97833\"\n     x2=\"257.77631\"\n     y2=\"165.94142\"\n     stroke=\"#000000\"\n     stroke-width=\"1.70717\"\n     id=\"line2-6-00\"\n     style=\"fill:#666666;stroke:#666666;stroke-width:1;stroke-dasharray:none\" />\n  <line\n     x1=\"248.23303\"\n     y1=\"169.7997\"\n     x2=\"257.77631\"\n     y2=\"178.76279\"\n     stroke=\"#000000\"\n     stroke-width=\"1.70717\"\n     id=\"line2-6-18\"\n     style=\"fill:#666666;stroke:#666666;stroke-width:1;stroke-dasharray:none\" />\n  <line\n     x1=\"248.23303\"\n     y1=\"182.62106\"\n     x2=\"257.77631\"\n     y2=\"191.58415\"\n     stroke=\"#000000\"\n     stroke-width=\"1.70717\"\n     id=\"line2-6-4\"\n     style=\"fill:#666666;stroke:#666666;stroke-width:1;stroke-dasharray:none\" />\n  <line\n     x1=\"248.23303\"\n     y1=\"195.44243\"\n     x2=\"257.77631\"\n     y2=\"204.40552\"\n     stroke=\"#000000\"\n     stroke-width=\"1.70717\"\n     id=\"line2-6-6\"\n     style=\"fill:#666666;stroke:#666666;stroke-width:1;stroke-dasharray:none\" />\n  <line\n     x1=\"248.23303\"\n     y1=\"208.26379\"\n     x2=\"257.77631\"\n     y2=\"217.22688\"\n     stroke=\"#000000\"\n     stroke-width=\"1.70717\"\n     id=\"line2-6-68\"\n     style=\"fill:#666666;stroke:#666666;stroke-width:1;stroke-dasharray:none\" />\n  <line\n     x1=\"248.23303\"\n     y1=\"221.08516\"\n     x2=\"257.77631\"\n     y2=\"230.04825\"\n     stroke=\"#000000\"\n     stroke-width=\"1.70717\"\n     id=\"line2-6-30\"\n     style=\"fill:#666666;stroke:#666666;stroke-width:1;stroke-dasharray:none\" />\n  <line\n     x1=\"248.23303\"\n     y1=\"233.90652\"\n     x2=\"257.77631\"\n     y2=\"242.8696\"\n     stroke=\"#000000\"\n     stroke-width=\"1.70717\"\n     id=\"line2-6-12\"\n     style=\"fill:#666666;stroke:#666666;stroke-width:1;stroke-dasharray:none\" />\n  <g\n     id=\"s6000\"\n     transform=\"translate(25,-37)\"\n     style=\"display:inline\">\n    <path\n       style=\"opacity:1;fill:none;fill-opacity:0.917647;stroke:#808080;stroke-width:1;stroke-dasharray:3, 1;stroke-dashoffset:0;stroke-opacity:1\"\n       d=\"m 158.78347,229.55885 c 0,-143.31924 -0.33564,-143.719577 -0.33564,-143.719577\"\n       id=\"path25\" />\n    <text\n       style=\"font-size:16px;fill:#ff0000;fill-opacity:0.917647;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1\"\n       x=\"115.24803\"\n       y=\"113.395\"\n       id=\"text_distance\">10cm</text>\n    <g\n       id=\"g1\"\n       transform=\"translate(-18.5,13.5)\"\n       style=\"display:inline\">\n      <rect\n         style=\"fill:#4d4d4d;fill-opacity:0.80174291;stroke:none;stroke-width:1.40937;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1\"\n         id=\"s6000box\"\n         width=\"57.894367\"\n         height=\"34.235725\"\n         x=\"119.60504\"\n         y=\"219.10728\"/>\n      <text\n         style=\"font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:16px;font-family:Arial;-inkscape-font-specification:Arial;fill:#ffffff;fill-opacity:1;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1\"\n         x=\"125.58513\"\n         y=\"240.95654\"\n         id=\"text25\">S6000</text>\n    </g>\n    <path\n       style=\"fill:#ff0000;fill-rule:evenodd;stroke:#ff0000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1\"\n       d=\"m 113.82516,121.85712 h 44.19418\"\n       id=\"path11\"\n       inkscape:connector-type=\"polyline\"\n       inkscape:connector-curvature=\"0\" />\n    <path\n       style=\"fill:#ff0000;fill-rule:evenodd;stroke:#ff0000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1\"\n       d=\"m 158.01934,121.85712 -6.36397,-4.94974\"\n       id=\"path13\"\n       inkscape:connector-type=\"polyline\"\n       inkscape:connector-curvature=\"0\" />\n    <path\n       style=\"fill:#ff0000;fill-rule:evenodd;stroke:#ff0000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1\"\n       d=\"m 151.77143,126.83402 6.36397,-4.94975\"\n       id=\"path13-1\"\n       inkscape:connector-type=\"polyline\"\n       inkscape:connector-curvature=\"0\" />\n  </g>\n  <path\n     style=\"fill:none;fill-rule:evenodd;stroke:#ff0000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1\"\n     d=\"M 267.85302,84.92448 H 249.11468\"\n     id=\"path11-2\"\n     inkscape:connector-type=\"polyline\"\n     inkscape:connector-curvature=\"0\" />\n  <path\n     style=\"fill:none;fill-rule:evenodd;stroke:#ff0000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1\"\n     d=\"m 249.11468,84.85126 6.36397,-4.94974\"\n     id=\"path13-7\"\n     inkscape:connector-type=\"polyline\"\n     inkscape:connector-curvature=\"0\" />\n  <path\n     style=\"fill:none;fill-rule:evenodd;stroke:#ff0000;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1\"\n     d=\"m 255.36259,89.82816 -6.36397,-4.94975\"\n     id=\"path13-1-2\"\n     inkscape:connector-type=\"polyline\"\n     inkscape:connector-curvature=\"0\" />\n  <path\n     style=\"fill:none;fill-opacity:0.917647;stroke:#808080;stroke-width:1;stroke-dasharray:3,1;stroke-dashoffset:0;stroke-opacity:1\"\n     d=\"m 248.31318,125.21897 c 0,-76.005791 -0.33619,-76.2181 -0.33619,-76.2181\"\n     id=\"path-28-ref\" />\n</svg>\n"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "query": "from(bucket: \"bucket\")\r\n  |> range(start: -1m)\r\n  |> filter(fn: (r) => r._measurement == \"S6000U_measurements\")\r\n  |> filter(fn: (r) => r._field == \"tof\")",
+          "refId": "A"
+        }
+      ],
+      "title": "Distance",
+      "type": "aceiot-svg-panel"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 0,
+        "y": 20
+      },
+      "id": 1,
+      "options": {
+        "addAllIDs": false,
+        "captureMappings": false,
+        "eventSource": "let values = data.series[0].fields[1].values;\r\nlet lastValue = values[values.length - 1];\r\nlet angle = lastValue;\r\n\r\nfunction getLastV(values) {\r\n    return values[values.length - 1];\r\n}\r\n\r\nlet accX = getLastV(data.series[1].fields[1].values);\r\nlet accY = getLastV(data.series[2].fields[1].values);\r\nlet accZ = getLastV(data.series[3].fields[1].values);\r\n\r\nconsole.log(svgmap);\r\nconsole.log(accX, accY, accZ, Math.atan(accX/accY));\r\n\r\nif (Math.atan(accX/accY) < -0.1) {\r\n    angle = -angle;\r\n}\r\n\r\nlet origX = svgmap.refline.x();\r\nlet origY = svgmap.refline.y() + svgmap.refline.height();\r\nlet redlineLen = 125;\r\n\r\nlet origPoint = {x: origX, y: origY};\r\nlet markPointX = origPoint.x + 5 + redlineLen * Math.sin(angle * Math.PI / 360);\r\nlet markPointY = origPoint.y - 10 - redlineLen * Math.cos(angle * Math.PI / 360);\r\nconsole.log(\"mark site:\", markPointX, markPointY, origPoint);\r\n\r\nsvgmap.g_plane.animateOn(1000, true, (elem) => {\r\n    elem.ease(\"<>\").transform({rotate: angle, origin: origPoint}, false)\r\n});\r\n\r\nsvgmap.angledeg.animateOn(1000, true, (elem) => {\r\n    svgmap.angledeg.text(`${angle.toFixed(1)}°`);\r\n    elem.ease(\"<>\").move(markPointX, markPointY);\r\n})",
+        "initSource": "// example of creating a function in the init script\noptions.animateLogo = (svgmap, data) => {\n    // extract the data series values and store the min/max\n    let values = data.series[0].fields[1].values,\n        min = Math.min(...values),\n        max = Math.max(...values),\n        iconHeight = svgmap.iconbg.height();\n    // use SVG.js for animation: https://svgjs.dev/docs/3.0/\n    [svgmap.barOne, svgmap.barTwo, svgmap.barThree, svgmap.barFour].forEach(elem => {\n        let x = elem.x(),\n            y = iconHeight * (values[0] - min) / (max - min) - elem.height() / 2;\n        elem.animate(1000)\n            .ease('<>')\n            .move(x, y)\n            .loop(0, true);\n    });\n}",
+        "svgMappings": [
+          {
+            "mappedName": "g_plane",
+            "svgId": "g26"
+          },
+          {
+            "mappedName": "redline",
+            "svgId": "path_red_line"
+          },
+          {
+            "mappedName": "angledeg",
+            "svgId": "text16"
+          },
+          {
+            "mappedName": "refline",
+            "svgId": "path25"
+          }
+        ],
+        "svgSource": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n<svg\n   version=\"1.1\"\n   width=\"300\"\n   height=\"300\"\n   id=\"svg14\"\n   sodipodi:docname=\"angle.svg\"\n   inkscape:version=\"1.3.2 (091e20e, 2023-11-25, custom)\"\n   xmlns:inkscape=\"http://www.inkscape.org/namespaces/inkscape\"\n   xmlns:sodipodi=\"http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd\"\n   xmlns:xlink=\"http://www.w3.org/1999/xlink\"\n   xmlns=\"http://www.w3.org/2000/svg\"\n   xmlns:svg=\"http://www.w3.org/2000/svg\">\n  <defs\n     id=\"defs14\">\n    <linearGradient\n       id=\"linearGradient25\"\n       inkscape:collect=\"always\">\n      <stop\n         style=\"stop-color:#555;stop-opacity:0.917647;\"\n         offset=\"0\"\n         id=\"stop25\" />\n      <stop\n         style=\"stop-color:#555;stop-opacity:0;\"\n         offset=\"1\"\n         id=\"stop26\" />\n    </linearGradient>\n    <rect\n       x=\"120.73848\"\n       y=\"471.19827\"\n       width=\"57.71759\"\n       height=\"17.05895\"\n       id=\"rect24\" />\n    <rect\n       x=\"120.82687\"\n       y=\"471.46344\"\n       width=\"57.629204\"\n       height=\"16.882174\"\n       id=\"rect23\" />\n    <rect\n       x=\"142.06642\"\n       y=\"340.09839\"\n       width=\"91.635918\"\n       height=\"55.965561\"\n       id=\"rect17\" />\n    <rect\n       x=\"172.81673\"\n       y=\"354.85855\"\n       width=\"67.035667\"\n       height=\"21.525215\"\n       id=\"rect15\" />\n    <rect\n       x=\"172.81673\"\n       y=\"354.85855\"\n       width=\"67.035667\"\n       height=\"21.525215\"\n       id=\"rect15-6\" />\n    <linearGradient\n       inkscape:collect=\"always\"\n       xlink:href=\"#linearGradient25\"\n       id=\"linearGradient26\"\n       x1=\"155.1069\"\n       y1=\"428.64688\"\n       x2=\"157.24771\"\n       y2=\"428.64688\"\n       gradientUnits=\"userSpaceOnUse\"\n       gradientTransform=\"translate(-4.5,-272.6492)\" />\n  </defs>\n  <sodipodi:namedview\n     id=\"namedview14\"\n     pagecolor=\"#ffffff\"\n     bordercolor=\"#555\"\n     borderopacity=\"0.25\"\n     inkscape:showpageshadow=\"2\"\n     inkscape:pageopacity=\"0.0\"\n     inkscape:pagecheckerboard=\"0\"\n     inkscape:deskcolor=\"#d1d1d1\"\n     inkscape:zoom=\"8\"\n     inkscape:cx=\"167.125\"\n     inkscape:cy=\"144.0625\"\n     inkscape:window-width=\"1920\"\n     inkscape:window-height=\"1009\"\n     inkscape:window-x=\"-8\"\n     inkscape:window-y=\"-8\"\n     inkscape:window-maximized=\"1\"\n     inkscape:current-layer=\"g26\" />\n  <path\n     style=\"opacity:1;fill:none;fill-opacity:0.917647;stroke:#666666;stroke-width:1;stroke-dasharray:3, 1;stroke-dashoffset:0;stroke-opacity:1\"\n     d=\"m 151.93849,217.50439 c 0,-163.26375 -0.33554,-163.7198 -0.33554,-163.7198\"\n     id=\"path25\" />\n  <text\n     x=\"155.75523\"\n     y=\"56.610107\"\n     font-size=\"16px\"\n     fill=\"#dddddd\"\n     id=\"text11\">Z</text>\n  <text\n     xml:space=\"preserve\"\n     x=\"155.77242\"\n     y=\"93.750336\"\n     font-size=\"16px\"\n     fill=\"red\"\n     id=\"text16\">10°</text>\n  <g\n     id=\"g26\"\n     inkscape:transform-center-x=\"0.9375\"\n     inkscape:transform-center-y=\"-55.261867\">\n    <path\n       style=\"fill:url(#linearGradient26);fill-opacity:0.917647;stroke:#ff0000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:0;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;paint-order:markers fill stroke\"\n       d=\"m 151.99771,216.33055 c 0,-120.019684 -0.33017,-120.354944 -0.33017,-120.354944\"\n       id=\"path_red_line\" />\n    <text\n       x=\"40.767403\"\n       y=\"199.77596\"\n       font-size=\"16px\"\n       fill=\"#ddd\"\n       id=\"text13-6\"\n       style=\"font-size:16px;stroke-width:0.853586\"\n       transform=\"matrix(0.95309035,-0.00406877,0.02840552,1.0490972,0,0)\">Orientation</text>\n    <path\n       style=\"fill:#ff0000;fill-opacity:0.917647;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1\"\n       d=\"M 40,214 H 237.5\"\n       id=\"path19\" />\n    <path\n       style=\"fill:#ff0000;fill-opacity:0.917647;stroke:#555;stroke-width:2.03796;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1\"\n       d=\"M 41.428932,217 H 151.75 262.07107\"\n       id=\"path20\"\n       sodipodi:nodetypes=\"ccc\" />\n    <line\n       x1=\"44.553116\"\n       y1=\"216.83859\"\n       x2=\"53.516205\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"95.838577\"\n       y1=\"216.83859\"\n       x2=\"104.80167\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-55\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"108.65994\"\n       y1=\"216.83859\"\n       x2=\"117.62303\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-1\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"121.48131\"\n       y1=\"216.83859\"\n       x2=\"130.4444\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-2\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"134.30267\"\n       y1=\"216.83859\"\n       x2=\"143.26576\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-8\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"147.12404\"\n       y1=\"216.83859\"\n       x2=\"156.08713\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-00\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"159.9454\"\n       y1=\"216.83859\"\n       x2=\"168.90849\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-18\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"172.76677\"\n       y1=\"216.83859\"\n       x2=\"181.72986\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-4\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"185.58813\"\n       y1=\"216.83859\"\n       x2=\"194.55122\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-6\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"198.4095\"\n       y1=\"216.83859\"\n       x2=\"207.37259\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-68\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"211.23087\"\n       y1=\"216.83859\"\n       x2=\"220.19395\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-30\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"224.05223\"\n       y1=\"216.83859\"\n       x2=\"233.01532\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-12\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"236.8736\"\n       y1=\"216.83859\"\n       x2=\"245.83669\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-557\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"249.69496\"\n       y1=\"216.83859\"\n       x2=\"258.65805\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line2-6-7\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"57.374481\"\n       y1=\"216.83859\"\n       x2=\"66.33757\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line20\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"70.195847\"\n       y1=\"216.83859\"\n       x2=\"79.158936\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line21\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <line\n       x1=\"83.017212\"\n       y1=\"216.83859\"\n       x2=\"91.980301\"\n       y2=\"226.38187\"\n       stroke=\"#555\"\n       stroke-width=\"1.70717\"\n       id=\"line22\"\n       style=\"stroke-width:0.534924;stroke-dasharray:none\" />\n    <rect\n       style=\"fill:#4c4c4c;fill-opacity:0.917647;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1\"\n       id=\"rect22\"\n       width=\"57.894367\"\n       height=\"17.235727\"\n       x=\"123.04438\"\n       y=\"198.81439\" />\n    <text\n       xml:space=\"preserve\"\n       style=\"font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:16px;font-family:Arial;-inkscape-font-specification:Arial;fill:#ffffff;fill-opacity:0.917647;stroke:none;stroke-width:1;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1\"\n       x=\"128.87802\"\n       y=\"213.31009\"\n       id=\"text25\">S6000</text>\n  </g>\n</svg>"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "query": "from(bucket: \"bucket\")\r\n  |> range(start: -1m)\r\n  |> filter(fn: (r) => r._measurement == \"S6000U_measurements\")\r\n  |> filter(fn: (r) => r._field == \"angle\" or r._field =~ /vibrAcc/)",
+          "refId": "A"
+        }
+      ],
+      "title": "Tilt",
+      "type": "aceiot-svg-panel"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1013
+              },
+              {
+                "color": "red",
+                "value": 1020
+              }
+            ]
+          },
+          "unit": "hPa"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 16,
+        "y": 20
+      },
+      "id": 7,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "11.1.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "query": "from(bucket: \"bucket\")\r\n  |> range(start: -1m)\r\n  |> filter(fn: (r) => r._measurement == \"S6000U_measurements\")\r\n  |> filter(fn: (r) => r._field == \"pressure\")",
+          "refId": "A"
+        }
+      ],
+      "title": "Pressure",
+      "type": "gauge"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": [],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "S6000",
+  "uid": "edxgmuccz5ou8c",
+  "version": 1,
+  "weekStart": ""
+}

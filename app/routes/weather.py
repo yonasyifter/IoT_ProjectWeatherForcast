@@ -39,3 +39,4 @@ from(bucket: "{INFLUXDB_BUCKET}")
     result = list(by_time.values())
     result.sort(key=lambda x: x["time"])
     return result
+ 

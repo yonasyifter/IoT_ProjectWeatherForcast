@@ -9,7 +9,7 @@ INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "")
 INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "")
 INFLUXDB_Measurement = os.getenv("INFLUXDB_Measurement", "")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 def validate_config() -> None:
     missing = [k for k, v in {
@@ -18,7 +18,7 @@ def validate_config() -> None:
         "INFLUXDB_ORG": INFLUXDB_ORG,
         "INFLUXDB_BUCKET": INFLUXDB_BUCKET,
         "INFLUXDB_Measurement": INFLUXDB_Measurement,
-        "GEMINI_API_KEY": GEMINI_API_KEY,
+        "GROQ_API_KEY": GROQ_API_KEY,
     }.items() if not v]
     if missing:
         raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")

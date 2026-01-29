@@ -7,14 +7,14 @@ from routes.weather import router as weather_router
 from routes.rag import router as rag_router # New RAG route
 import os
 import google.generativeai as genai
-from config import GEMINI_API_KEY
+from config import GROQ_API_KEY
 
 # 1. Lifespan for efficient startup/shutdown (e.g., closing DB pools)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize Gemini client or DB connections here
-    if GEMINI_API_KEY:
-        genai.configure(api_key=GEMINI_API_KEY)
+    if GROQ_API_KEY:
+        genai.configure(api_key=GROQ_API_KEY)
     yield
     # Shutdown: Clean up resources
 
