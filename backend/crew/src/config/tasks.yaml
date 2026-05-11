@@ -1,0 +1,175 @@
+fetch_and_validate_sensor_data:
+  description: >
+    Analyze the provided raw sensor data JSON string: {device_data}.
+    Validate its structure, identify available device IDs and metrics,
+    and extract the weather prediction and confidence if present.
+    Return a clean, structured summary of what data is available,
+    flagging any missing or malformed readings.
+  expected_output: >
+    A validated summary of available sensor devices, their metrics, and
+    any weather prediction data. Flag if data is missing or malformed.
+  agent: sensor_agent
+
+fetch_edge_device_data:
+  description: >
+    Use the RCMS OpenAPI tools to gather comprehensive Edge device intelligence.
+    Steps:
+    1. Call rcms_full_snapshot to get system info, all devices, alerts, diagnostics.
+    2. For each device returned, note its model, firmware version, uptime, and status.
+    3. Compare device IDs from the RCMS API against the sensor data devices from the
+       previous task — flag any devices present in one source but missing from the other.
+    4. Summarise active alerts with their severity.
+    5. Report on Edge system resources: CPU usage, available RAM, storage.
+    If the RCMS Edge is unreachable, report that clearly and continue with available data.
+  expected_output: >
+    A structured JSON-compatible summary containing:
+    - Edge system health (CPU, RAM, storage, uptime)
+    - Device inventory: ID, model, firmware, status, uptime per device
+    - Per-device sensor readings from RCMS (if available)
+    - Active alerts with severity and affected device
+    - Diagnostic findings
+    - Any discrepancies between RCMS device list and InfluxDB sensor data
+  agent: edge_device_agent
+
+build_multilingual_context:
+  description: >
+    Using the validated sensor data from task 1 and Edge device data from task 2,
+    build a complete, structured context string in the language: {language}.
+    Format all metrics with proper units (degrees C, %, Pa, dB, cm).
+    Convert the weather prediction confidence percentage into a natural verbal
+    expression appropriate for the language (e.g. "likely", "probabilmente").
+    Include a device health summary table and alert highlights.
+    If the language is Italian, use Italian field labels and phrasing.
+  expected_output: >
+    A formatted, human-readable context block in the target language, containing:
+    - Environmental sensor readings per device with units
+    - Weather prediction with confidence phrasing
+    - Device health summary (online/offline, firmware status)
+    - Alert highlights
+    - Ready to be used as background knowledge for answering the user query
+  agent: context_agent
+
+detect_anomalies:
+  description: >
+    Analyse the sensor readings and Edge device data gathered in previous tasks.
+    Detect and report:
+    - Sensor value anomalies: readings outside expected ranges
+      (e.g. temperature > 50 C or < -10 C, humidity > 100 %, noise > 100 dB)
+    - Connectivity issues: devices marked offline or unreachable
+    - Firmware concerns: devices running outdated firmware versions
+    - Hardware warnings: high CPU (>90 %), low RAM (<10 %), low storage (<10 %)
+    - Alert escalations: any CRITICAL severity alerts
+    Assign each finding a severity: INFO, WARNING, or CRITICAL.
+    Provide a recommended action for each WARNING and CRITICAL finding.
+  expected_output: >
+    A structured anomaly report with sections:
+    - CRITICAL findings (requires immediate attention)
+    - WARNING findings (requires monitoring/action)
+    - INFO findings (informational, no action needed)
+    - Recommendations list
+    Each item includes: finding description, affected device/metric, severity, recommendation.
+  agent: anomaly_agent
+
+generate_answer:
+  description: >
+    Answer the following user query: "{user_query}"
+    Use the context built in the previous tasks as your primary knowledge source,
+    including both the sensor/weather data AND the Edge device intelligence.
+    The query was originally spoken or written in: {language}.
+    You MUST respond exclusively in {language}.
+
+    DEVICE QUERY RULES — always include Edge device details when the user asks about:
+    - Device status, health, connectivity, or availability
+    - Firmware versions or hardware specifications
+    - System resources (CPU, RAM, storage)
+    - Specific device IDs or device counts
+    - Any "how many devices", "which devices are online", or similar questions
+
+    CHART DETECTION RULES — output a JSON chart block when the user asks for:
+    - Any graph, chart, plot, visualization, or diagram
+    - Comparisons of sensor values (e.g. "compare temperature and humidity")
+    - Trends over time (e.g. "show me temperature over the last hour")
+    - Distribution or breakdown of data
+    - Any phrasing like "show me", "display", "visualize", "graph", "plot"
+
+    When a chart IS needed, your ENTIRE response must be ONLY this JSON block:
+    ```json
+    {{
+      "chart_type": "bar",
+      "title": "Descriptive Chart Title",
+      "labels": ["Label A", "Label B", "Label C"],
+      "data": [42.5, 67.3, 55.1],
+      "unit": "unit string",
+      "description": "A brief explanation in {language}."
+    }}
+    ```
+
+    Supported chart_type values: "bar", "line", "pie", "doughnut", "radar"
+    For multi-dataset charts use:
+    ```json
+    {{
+      "chart_type": "line",
+      "title": "Multi-Sensor Trend",
+      "labels": ["10:00", "10:15", "10:30"],
+      "datasets": [
+        {{"label": "Temperature (C)", "data": [22.1, 22.5, 23.0]}},
+        {{"label": "Humidity (%)", "data": [65, 63, 61]}}
+      ],
+      "description": "Trend description in {language}."
+    }}
+    ```
+
+    When NO chart is needed, respond with plain conversational text:
+    - Be warm, concise (2-4 sentences unless detail is needed)
+    - Reference specific sensor readings with units when relevant
+    - Reference Edge device info (model, firmware, status) when relevant
+    - If sensor data is unavailable, say so politely without fabricating numbers
+    - NEVER respond in a different language than {language}
+  expected_output: >
+    Either (a) a JSON code block with chart_type, title, labels/datasets, and description
+    when visualization is requested, OR (b) a plain text conversational response in
+    {language} for all other queries. Never mix both. Never fabricate data.
+  agent: reasoning_agent
+
+compose_full_report:
+  description: >
+    Compose a comprehensive Smart Park analysis report in Markdown format
+    using all data gathered in the previous tasks.
+    The report must be in {language} and follow this structure:
+
+    # Smart Park Analysis Report
+    **Generated:** [current datetime]
+    **Query:** {user_query}
+
+    ## Executive Summary
+    [2-3 sentence overview of current park status]
+
+    ## Device Inventory
+    | Device ID | Model | Firmware | Status | Uptime |
+    |-----------|-------|----------|--------|--------|
+    [one row per device from RCMS + InfluxDB]
+
+    ## Current Environmental Conditions
+    [Per-device sensor readings table with units]
+
+    ## Weather Assessment
+    [Prediction and confidence, current conditions]
+
+    ## System Health
+    [Edge CPU, RAM, storage, network status]
+
+    ## Anomaly & Alert Findings
+    [Structured anomaly report from detect_anomalies task]
+
+    ## Recommendations
+    [Numbered list of actionable items]
+
+    ## Data Sources
+    - RCMS Edge OpenAPI: [status]
+    - InfluxDB: [status]
+    - Sensor Payload: [device count]
+  expected_output: >
+    A complete, well-structured Markdown report covering all sections above.
+    Must be thorough enough to export as PDF or Word document.
+    All values must include appropriate units. No fabricated data.
+  agent: report_agent

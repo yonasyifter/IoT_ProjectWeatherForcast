@@ -1,0 +1,74 @@
+{
+  "header": {
+    "language": "Language",
+    "english": "English",
+    "italian": "Italiano"
+  },
+  "common": {
+    "dashboard": "Dashboard",
+    "home": "Home",
+    "logout": "Logout",
+    "refresh": "Refresh",
+    "loading": "Loading...",
+    "no_results": "No results found",
+    "page": "Page",
+    "prev": "Prev",
+    "next": "Next"
+  },
+  "titles": {
+    "dashboard": "Dashboard"
+  },
+  "sidebar": {
+    "sensor_dashboard": "Sensor Dashboard",
+    "weather_map": "Weather Map",
+    "rcms_dashboard": "RCMS Dashboard",
+    "rcms_alerts": "Alerts & Alarms",
+    "rcms_gps": "GPS Tracking",
+    "rcms_devices": "Device Management",
+    "sensor_analytics": "Sensor Analytics",
+    "ai_agent": "AI Agent",
+    "help": "Help",
+    "docs": "Docs"
+  },
+  "rcms_dashboard": {
+    "title": "RCMS Device Dashboard",
+    "breadcrumb": "Device Dashboard",
+    "total_devices": "Total Devices",
+    "online": "Online",
+    "offline": "Offline",
+    "registered": "Registered",
+    "unregistered": "Unregistered",
+    "users": "Users",
+    "device_list": "Device List",
+    "serial_number": "Serial Number",
+    "name": "Name",
+    "model": "Model",
+    "status": "Status",
+    "group": "Group",
+    "actions": "Actions",
+    "reboot_confirm": "Reboot device {sn}?",
+    "reboot_success": "Reboot command sent to {sn}",
+    "reboot_error": "Error: {message}"
+  },
+  "rcms_alerts": {
+    "title": "Alert & Alarm Logs",
+    "breadcrumb": "Alerts & Alarms",
+    "by_device": "By Device",
+    "by_group": "By Group",
+    "load_alerts": "Load Alerts",
+    "total": "Total",
+    "critical": "Critical",
+    "warning": "Warning",
+    "info": "Info",
+    "loading_alerts": "Loading alerts...",
+    "no_alerts": "No alerts found for selected period",
+    "time": "Time",
+    "device_sn": "Device SN",
+    "alert_type": "Alert Type",
+    "level": "Level",
+    "message": "Message",
+    "status": "Status",
+    "resolved": "Resolved",
+    "active": "Active"
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "header": {
+    "language": "Lingua",
+    "english": "Inglese",
+    "italian": "Italiano"
+  },
+  "common": {
+    "dashboard": "Dashboard",
+    "home": "Home",
+    "logout": "Logout",
+    "refresh": "Aggiorna",
+    "loading": "Caricamento...",
+    "no_results": "Nessun risultato trovato",
+    "page": "Pagina",
+    "prev": "Precedente",
+    "next": "Successiva"
+  },
+  "titles": {
+    "dashboard": "Dashboard"
+  },
+  "sidebar": {
+    "sensor_dashboard": "Dashboard Sensori",
+    "weather_map": "Mappa Meteo",
+    "rcms_dashboard": "Dashboard RCMS",
+    "rcms_alerts": "Avvisi e Allarmi",
+    "rcms_gps": "Tracciamento GPS",
+    "rcms_devices": "Gestione Dispositivi",
+    "sensor_analytics": "Analisi Sensori",
+    "ai_agent": "Agente AI",
+    "help": "Aiuto",
+    "docs": "Documentazione"
+  },
+  "rcms_dashboard": {
+    "title": "Dashboard Dispositivi RCMS",
+    "breadcrumb": "Dashboard Dispositivi",
+    "total_devices": "Dispositivi Totali",
+    "online": "Online",
+    "offline": "Offline",
+    "registered": "Registrati",
+    "unregistered": "Non Registrati",
+    "users": "Utenti",
+    "device_list": "Elenco Dispositivi",
+    "serial_number": "Numero di Serie",
+    "name": "Nome",
+    "model": "Modello",
+    "status": "Stato",
+    "group": "Gruppo",
+    "actions": "Azioni",
+    "reboot_confirm": "Riavviare il dispositivo {sn}?",
+    "reboot_success": "Comando di riavvio inviato a {sn}",
+    "reboot_error": "Errore: {message}"
+  },
+  "rcms_alerts": {
+    "title": "Log Avvisi e Allarmi",
+    "breadcrumb": "Avvisi e Allarmi",
+    "by_device": "Per Dispositivo",
+    "by_group": "Per Gruppo",
+    "load_alerts": "Carica Avvisi",
+    "total": "Totale",
+    "critical": "Critico",
+    "warning": "Avvertimento",
+    "info": "Info",
+    "loading_alerts": "Caricamento avvisi...",
+    "no_alerts": "Nessun avviso trovato per il periodo selezionato",
+    "time": "Ora",
+    "device_sn": "SN Dispositivo",
+    "alert_type": "Tipo Avviso",
+    "level": "Livello",
+    "message": "Messaggio",
+    "status": "Stato",
+    "resolved": "Risolto",
+    "active": "Attivo"
+  }
+}

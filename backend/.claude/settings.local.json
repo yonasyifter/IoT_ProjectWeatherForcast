@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//e/0Code/VsCode/ProjectX_web/**)",
+      "Bash(dir \"E:\\\\0Code\\\\VsCode\\\\ProjectX_web\")"
+    ]
+  }
+}
