@@ -42,29 +42,20 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-_ORIGINS = os.getenv("ALLOWED_ORIGINS", ",".join([
-    "http://localhost:5173", "http://127.0.0.1:5173",
-    "http://localhost:5174", "http://127.0.0.1:5174",
-    "http://localhost:5500", "http://127.0.0.1:5500",
-    "http://localhost:8000", "http://127.0.0.1:8000",
-    "http://localhost:8081", "http://127.0.0.1:8081",
-])).split(",")
-
-# Normalize .env values (trim spaces/quotes) and always keep local dev origins.
+_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",")
 _ORIGINS = [o.strip().strip('"').strip("'") for o in _ORIGINS if o and o.strip()]
-for _default_origin in [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-]:
-    if _default_origin not in _ORIGINS:
-        _ORIGINS.append(_default_origin)
+
+# If no origins provided via env, allow common dev ports for local development
+if not _ORIGINS:
+    _ORIGINS = [
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+    ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ORIGINS,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|.*\.amazonaws\.com)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

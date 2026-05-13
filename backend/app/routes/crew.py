@@ -2,7 +2,6 @@
 app/routes/crew.py
 
 FastAPI router for the CrewAI-powered Smart Park assistant.
-Supports both JSON and multipart/form-data input.
 
 Endpoint: POST /api/crew/chat
 Auth: Firebase session (Bearer token)

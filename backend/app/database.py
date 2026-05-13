@@ -1,58 +1,65 @@
+import os
+import json
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
 
 def init_firebase():
     if len(firebase_admin._apps) > 0:
         print("(DATABASE) Firebase Admin SDK already initialized.")
         return
+
+    # Try reading as a JSON string first (Production/ECS mode)
+    cred_json = os.getenv("FIREBASE_CREDENTIALS")
+    if cred_json:
+        try:
+            print("(DATABASE) Initializing Firebase from JSON string environment variable.")
+            cred_dict = json.loads(cred_json.strip('"').strip("'"))
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            return
+        except Exception as e:
+            print(f"(DATABASE) Error parsing FIREBASE_CREDENTIALS JSON: {e}")
+
+    # Fallback to file path (Local development mode)
     cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
-    print(f"(DATABASE) Initial cred_path from ENV: {cred_path}")
-    
-    # Handle Docker environment where absolute Windows paths in .env won't work
     if cred_path:
-        # Strip quotes if present
         cred_path = cred_path.strip('"').strip("'")
-        
         if not os.path.exists(cred_path):
-            print(f"(DATABASE) Path {cred_path} does not exist. Searching...")
             filename = os.path.basename(cred_path)
-            # Check common locations in Docker
             search_paths = [
                 filename,
                 os.path.join("/app", filename),
                 os.path.join("/app/backend", filename),
                 os.path.join(os.path.dirname(__file__), "..", filename),
                 os.path.join(os.path.dirname(__file__), "..", "..", filename),
-                "/app/iot-project-49099-firebase-adminsdk-fbsvc-e448ec3df1.json"
             ]
             for p in search_paths:
-                print(f"(DATABASE) Checking: {p}")
                 if os.path.exists(p):
-                    print(f"(DATABASE) Found credentials at: {p}")
                     cred_path = p
                     break
-    
-    print(f"(DATABASE) Final cred_path used: {cred_path}")
-    cred = credentials.Certificate(cred_path)
-    firebase_admin.initialize_app(cred)
 
+        try:
+            print(f"(DATABASE) Initializing Firebase from file: {cred_path}")
+            cred = credentials.Certificate(cred_path)
+            firebase_admin.initialize_app(cred)
+            return
+        except Exception as e:
+            print(f"(DATABASE) Error loading credentials from file {cred_path}: {e}")
+
+    raise ValueError("FIREBASE_CREDENTIALS (JSON) or FIREBASE_CREDENTIALS_PATH not set or invalid.")
 
 def get_firebase_auth():
     """Get Firebase Auth instance"""
     init_firebase()
     return auth
 
-
 def get_firestore_db():
     """Get Firestore instance"""
     init_firebase()
     return firestore.client()
-
 
 def create_db():
     """Firebase initialization - collections are created on first write"""

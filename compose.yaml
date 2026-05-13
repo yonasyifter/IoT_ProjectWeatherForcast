@@ -1,5 +1,8 @@
 ﻿services:
   fastapi:
+    build:
+      context: .
+      dockerfile: backend.Dockerfile
     image: 289400854691.dkr.ecr.eu-south-1.amazonaws.com/iotsmartpark/fastapi:latest
     ports:
       - "8000:8000"
@@ -16,6 +19,9 @@
     restart: unless-stopped
 
   admin-side:
+    build:
+      context: .
+      dockerfile: frontend.Dockerfile
     image: 289400854691.dkr.ecr.eu-south-1.amazonaws.com/iotsmartpark/admin-side:latest
     ports:
       - "80:80"
