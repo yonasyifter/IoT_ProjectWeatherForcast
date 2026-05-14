@@ -7,12 +7,12 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-# Create user first to avoid permission issues during copy
 RUN useradd -m -u 1000 appuser
 COPY --chown=appuser:appuser backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=appuser:appuser backend/app/ ./app/
+COPY --chown=appuser:appuser backend/crew/ ./crew/ 
 
 USER appuser
 EXPOSE 8000
