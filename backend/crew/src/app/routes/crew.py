@@ -1,0 +1,560 @@
+"""
+app/routes/crew.py
+
+FastAPI router for the CrewAI-powered Smart Park assistant.
+
+Endpoint: POST /api/crew/chat
+Auth: Firebase session (Bearer token)
+"""
+
+from __future__ import annotations
+
+import asyncio
+import functools
+import json
+import os
+import re
+import traceback
+from datetime import datetime
+from typing import Any
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+
+from app.config import INFLUXDB_BUCKET, INFLUXDB_MEASUREMENT
+from app.influx import query as influx_query
+from app.routes.auth import get_admin_session_user
+
+try:
+    from crew.src.crew import run_crew, run_crew_report
+
+    CREW_AVAILABLE = True
+except Exception as crew_err:  # noqa: BLE001
+    CREW_AVAILABLE = False
+    CREW_IMPORT_ERROR = str(crew_err)
+
+try:
+    from crew.src.tools.voice_tool import transcribe_audio
+
+    VOICE_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    VOICE_AVAILABLE = False
+
+router = APIRouter()
+
+SUPPORTED_LANGUAGES: set[str] = {
+    "en",
+    "it",
+    "fr",
+    "de",
+    "es",
+    "pt",
+    "ar",
+    "zh",
+    "ja",
+    "ko",
+}
+
+ERROR_MESSAGES: dict[str, dict[str, str]] = {
+    "no_input": {
+        "en": "Please provide either a text query or an audio recording.",
+        "it": "Si prega di fornire una query di testo o una registrazione audio.",
+    },
+    "audio_empty": {
+        "en": "Audio file is empty.",
+        "it": "Il file audio e vuoto.",
+    },
+    "audio_too_large": {
+        "en": "Audio file too large (max 25 MB). Please record a shorter message.",
+        "it": "File audio troppo grande (max 25 MB). Registra un messaggio piu breve.",
+    },
+    "transcription_failed": {
+        "en": "I could not understand the audio. Please try again or type your question.",
+        "it": "Non ho capito l'audio. Riprova o scrivi la tua domanda.",
+    },
+}
+
+
+def _err(key: str, language: str) -> str:
+    msgs = ERROR_MESSAGES.get(key, {})
+    return msgs.get(language, msgs.get("en", "An error occurred."))
+
+
+def _coerce_json_to_str(value: Any, fallback: str | None) -> str | None:
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value)
+    except Exception:
+        return fallback
+
+
+def _extract_context_payload(context_data: str | None) -> dict[str, Any] | None:
+    if not context_data:
+        return None
+    try:
+        parsed = json.loads(context_data)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        return None
+    return None
+
+
+def _extract_chart(answer: str) -> tuple[str, dict[str, Any] | None]:
+    """
+    Scan the AI answer for a JSON chart block.
+    Returns (clean_text, chart_dict_or_none).
+    """
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", answer, re.DOTALL | re.IGNORECASE)
+    raw_json = None
+    bare_match = None
+
+    if fence_match:
+        raw_json = fence_match.group(1)
+    else:
+        bare_match = re.search(r'(\{[^{}]*"chart_type"[^{}]*\})', answer, re.DOTALL)
+        if bare_match:
+            raw_json = bare_match.group(1)
+
+    if not raw_json:
+        return answer.strip(), None
+
+    try:
+        chart = json.loads(raw_json)
+        if not isinstance(chart, dict) or "chart_type" not in chart:
+            return answer.strip(), None
+
+        clean = answer
+        if fence_match:
+            clean = answer[: fence_match.start()] + answer[fence_match.end() :]
+        elif bare_match:
+            clean = answer[: bare_match.start()] + answer[bare_match.end() :]
+
+        clean = clean.strip()
+        if not clean and chart.get("description"):
+            clean = str(chart["description"])
+        return clean, chart
+    except (json.JSONDecodeError, ValueError):
+        return answer.strip(), None
+
+
+def _extract_weather(device_data: str | None) -> tuple[str | None, float | None]:
+    """Pull weather prediction fields from raw sensor JSON if present."""
+    if not device_data:
+        return None, None
+    try:
+        data = json.loads(device_data)
+        if not isinstance(data, list):
+            return None, None
+        for device in data:
+            if isinstance(device, dict) and "weather_prediction" in device:
+                return (
+                    device["weather_prediction"],
+                    float(device.get("prediction_confidence", 0)),
+                )
+    except Exception:
+        return None, None
+    return None, None
+
+
+def _is_temperature_query(text: str) -> bool:
+    q = text.lower()
+    return "temperature" in q or "temp" in q
+
+
+def _extract_last_days(text: str) -> int | None:
+    q = text.lower()
+    match = re.search(r"last\s+(\d{1,3})\s+day", q)
+    if match:
+        return max(1, min(60, int(match.group(1))))
+    if "10 days" in q:
+        return 10
+    return None
+
+
+def _wants_chart(text: str) -> bool:
+    q = text.lower()
+    return "chart" in q or "graph" in q or "bar" in q or "plot" in q
+
+
+def _is_greeting(text: str) -> bool:
+    q = re.sub(r"[^a-zA-Z\s]", "", text).lower().strip()
+    return q in {"hi", "hello", "helo", "hey", "ciao", "salve"}
+
+
+def _query_temperature_today() -> dict[str, Any] | None:
+    if not INFLUXDB_BUCKET or not INFLUXDB_MEASUREMENT:
+        return None
+    flux = f'''
+from(bucket: "{INFLUXDB_BUCKET}")
+  |> range(start: today())
+  |> filter(fn: (r) => r._measurement == "{INFLUXDB_MEASUREMENT}")
+  |> filter(fn: (r) => r._field == "temperature")
+  |> keep(columns: ["_time", "_value"])
+'''
+    tables = influx_query(flux)
+    points: list[tuple[datetime, float]] = []
+    for table in tables:
+        for record in table.records:
+            ts = record.get_time()
+            val = record.get_value()
+            if ts is None or val is None:
+                continue
+            try:
+                points.append((ts, float(val)))
+            except (TypeError, ValueError):
+                continue
+    if not points:
+        return None
+
+    points.sort(key=lambda x: x[0])
+    values = [p[1] for p in points]
+    latest_time, latest_value = points[-1]
+    avg_value = sum(values) / len(values)
+    min_value = min(values)
+    max_value = max(values)
+    return {
+        "answer": (
+            f"Today's park temperature: latest {latest_value:.1f} C "
+            f"(avg {avg_value:.1f} C, min {min_value:.1f} C, max {max_value:.1f} C). "
+            f"Last update: {latest_time.isoformat()}."
+        ),
+        "chart": None,
+    }
+
+
+def _query_temperature_last_days(days: int) -> dict[str, Any] | None:
+    if not INFLUXDB_BUCKET or not INFLUXDB_MEASUREMENT:
+        return None
+    flux = f'''
+from(bucket: "{INFLUXDB_BUCKET}")
+  |> range(start: -{days}d)
+  |> filter(fn: (r) => r._measurement == "{INFLUXDB_MEASUREMENT}")
+  |> filter(fn: (r) => r._field == "temperature")
+  |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
+  |> keep(columns: ["_time", "_value"])
+'''
+    tables = influx_query(flux)
+    rows: list[tuple[str, float]] = []
+    for table in tables:
+        for record in table.records:
+            ts = record.get_time()
+            val = record.get_value()
+            if ts is None or val is None:
+                continue
+            label = ts.strftime("%Y-%m-%d")
+            try:
+                rows.append((label, float(val)))
+            except (TypeError, ValueError):
+                continue
+    if not rows:
+        return None
+
+    # Deduplicate by date in case multiple series are returned
+    by_day: dict[str, float] = {}
+    for label, value in rows:
+        by_day[label] = value
+    labels = sorted(by_day.keys())
+    data = [round(by_day[label], 2) for label in labels]
+
+    chart = {
+        "chart_type": "bar",
+        "title": f"Average Temperature - Last {days} Days",
+        "description": "Daily mean temperature from InfluxDB.",
+        "labels": labels,
+        "datasets": [
+            {
+                "label": "Temperature (C)",
+                "data": data,
+                "backgroundColor": "rgba(59, 130, 246, 0.65)",
+                "borderColor": "rgba(37, 99, 235, 1)",
+            }
+        ],
+    }
+    avg_value = sum(data) / len(data)
+    answer = (
+        f"Here is the bar chart for the last {days} days. "
+        f"Average temperature over this period is {avg_value:.1f} C."
+    )
+    return {"answer": answer, "chart": chart}
+
+
+@router.post(
+    "/chat",
+    summary="Smart Park AI Assistant (CrewAI + multi-LLM)",
+    dependencies=[Depends(get_admin_session_user)],
+)
+async def crew_chat(
+    request: Request,
+    user_query: str | None = Form(None),
+    device_data: str | None = Form(None),
+    context_data: str | None = Form(None),
+    audio_file: UploadFile | None = File(None),
+    language: str = Form("en"),
+) -> dict[str, Any]:
+    if not CREW_AVAILABLE:
+        raise HTTPException(status_code=503, detail=f"CrewAI not available: {CREW_IMPORT_ERROR}")
+
+    # Support JSON payloads from web clients for text-only requests.
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        payload = await request.json()
+        if isinstance(payload, dict):
+            user_query = payload.get("user_query", user_query)
+            language = payload.get("language", language)
+            device_data = _coerce_json_to_str(payload.get("device_data"), device_data)
+            context_data = _coerce_json_to_str(payload.get("context_data"), context_data)
+
+    lang = (language or "en").lower().strip()
+    if lang not in SUPPORTED_LANGUAGES:
+        lang = "en"
+
+    context_payload = _extract_context_payload(context_data)
+
+    if not user_query and not audio_file:
+        raise HTTPException(status_code=400, detail=_err("no_input", lang))
+
+    transcript = ""
+    if audio_file:
+        audio_bytes = await audio_file.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail=_err("audio_empty", lang))
+        if len(audio_bytes) > 25 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail=_err("audio_too_large", lang))
+
+        if VOICE_AVAILABLE:
+            transcript, transcription_error = transcribe_audio(
+                audio_bytes=audio_bytes,
+                content_type=audio_file.content_type,
+                language=lang,
+            )
+            if transcription_error and not transcript:
+                return {
+                    "transcript": transcript,
+                    "answer": _err("transcription_failed", lang),
+                    "chart": None,
+                    "weather_prediction": None,
+                    "prediction_confidence": None,
+                    "language": lang,
+                    "context": context_payload,
+                }
+
+    effective_query = transcript or user_query
+    if not effective_query:
+        return {
+            "transcript": transcript,
+            "answer": _err("transcription_failed", lang),
+            "chart": None,
+            "weather_prediction": None,
+            "prediction_confidence": None,
+            "language": lang,
+            "context": context_payload,
+        }
+
+    weather_prediction, prediction_confidence = _extract_weather(device_data)
+    timeout_seconds = int(os.getenv("CREW_TIMEOUT_SECONDS", "90"))
+
+    # Deterministic temperature analytics directly from InfluxDB.
+    if _is_temperature_query(effective_query):
+        days = _extract_last_days(effective_query)
+        wants_chart = _wants_chart(effective_query)
+        direct_error: str | None = None
+        try:
+            if days is not None and (wants_chart or days >= 2):
+                direct = _query_temperature_last_days(days)
+            elif "today" in effective_query.lower():
+                direct = _query_temperature_today()
+            else:
+                direct = None
+        except Exception as exc:
+            direct_error = str(exc)
+            direct = None
+        if direct:
+            return {
+                "transcript": transcript,
+                "answer": direct["answer"],
+                "chart": direct.get("chart"),
+                "weather_prediction": weather_prediction,
+                "prediction_confidence": prediction_confidence,
+                "language": lang,
+                "context": context_payload,
+            }
+        return {
+            "transcript": transcript,
+            "answer": (
+                "I could not read temperature data from InfluxDB right now. "
+                "Please verify INFLUXDB_BUCKET / INFLUXDB_MEASUREMENT and try again."
+            ),
+            "chart": None,
+            "weather_prediction": weather_prediction,
+            "prediction_confidence": prediction_confidence,
+            "language": lang,
+            "context": {
+                **(context_payload or {}),
+                "debug": {"temperature_query_error": direct_error} if direct_error else None,
+            },
+        }
+
+    if _is_greeting(effective_query):
+        return {
+            "transcript": transcript,
+            "answer": "Hello. How can I help you understand the park conditions today?",
+            "chart": None,
+            "weather_prediction": weather_prediction,
+            "prediction_confidence": prediction_confidence,
+            "language": lang,
+            "context": context_payload,
+        }
+
+    try:
+        loop = asyncio.get_event_loop()
+        with __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor(
+            max_workers=1
+        ) as pool:
+            raw_answer = await asyncio.wait_for(
+                loop.run_in_executor(
+                    pool,
+                    functools.partial(
+                        run_crew,
+                        device_data=device_data or "",
+                        user_query=effective_query,
+                        language=lang,
+                        context_data=json.dumps(context_payload) if context_payload else "",
+                    ),
+                ),
+                timeout=timeout_seconds,
+            )
+        raw_answer = str(raw_answer or "")
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=f"AI assistant timed out after {timeout_seconds}s. Please retry with a shorter prompt.",
+        )
+    except Exception as exc:
+        traceback.print_exc()
+        return {
+            "transcript": transcript,
+            "answer": (
+                "The AI provider is temporarily unavailable, so I cannot generate "
+                "a full assistant response right now. Please retry in a moment."
+            ),
+            "chart": None,
+            "weather_prediction": weather_prediction,
+            "prediction_confidence": prediction_confidence,
+            "language": lang,
+            "context": {
+                **(context_payload or {}),
+                "debug": {"crew_pipeline_error": str(exc)},
+            },
+        }
+
+    answer_text, chart_data = _extract_chart(raw_answer)
+    return {
+        "transcript": transcript,
+        "answer": answer_text,
+        "chart": chart_data,
+        "weather_prediction": weather_prediction,
+        "prediction_confidence": prediction_confidence,
+        "language": lang,
+        "context": context_payload,
+    }
+
+
+@router.post(
+    "/report",
+    summary="Generate a full Smart Park analysis report (Markdown)",
+    dependencies=[Depends(get_admin_session_user)],
+)
+async def crew_report(
+    request: Request,
+    user_query: str | None = Form(None),
+    device_data: str | None = Form(None),
+    context_data: str | None = Form(None),
+    language: str = Form("en"),
+) -> dict[str, Any]:
+    """
+    Generate a comprehensive Markdown analysis report using the full
+    multi-agent crew (sensor data + RCMS Edge OpenAPI + anomaly detection).
+    Returns {"report": "<markdown string>", "language": "en"}.
+    """
+    if not CREW_AVAILABLE:
+        raise HTTPException(status_code=503, detail=f"CrewAI not available: {CREW_IMPORT_ERROR}")
+
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        payload = await request.json()
+        if isinstance(payload, dict):
+            user_query = payload.get("user_query", user_query)
+            language = payload.get("language", language)
+            device_data = _coerce_json_to_str(payload.get("device_data"), device_data)
+            context_data = _coerce_json_to_str(payload.get("context_data"), context_data)
+
+    lang = (language or "en").lower().strip()
+    if lang not in SUPPORTED_LANGUAGES:
+        lang = "en"
+
+    effective_query = user_query or "Generate a full Smart Park analysis report."
+    context_payload = _extract_context_payload(context_data)
+
+    # Fetch fresh device snapshot for the report
+    if not device_data:
+        try:
+            from app.influx import query as influx_query
+            from app.config import INFLUXDB_BUCKET, INFLUXDB_MEASUREMENT as meas
+            flux = f'''
+from(bucket: "{INFLUXDB_BUCKET}")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "{meas}")
+  |> last()
+  |> keep(columns: ["_time","_field","_value","device_id"])
+'''
+            tables = influx_query(flux)
+            by_device: dict[str, dict] = {}
+            for table in tables:
+                for rec in table.records:
+                    dev = str(rec.values.get("device_id", "unknown"))
+                    if dev not in by_device:
+                        by_device[dev] = {"device_id": dev}
+                    by_device[dev][rec.get_field()] = rec.get_value()
+            if by_device:
+                device_data = json.dumps(list(by_device.values()))
+        except Exception:
+            pass
+
+    timeout_seconds = int(os.getenv("CREW_TIMEOUT_SECONDS", "120"))
+
+    try:
+        loop = asyncio.get_event_loop()
+        with __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor(
+            max_workers=1
+        ) as pool:
+            markdown_report = await asyncio.wait_for(
+                loop.run_in_executor(
+                    pool,
+                    functools.partial(
+                        run_crew_report,
+                        device_data=device_data or "",
+                        user_query=effective_query,
+                        language=lang,
+                        context_data=json.dumps(context_payload) if context_payload else "",
+                    ),
+                ),
+                timeout=timeout_seconds,
+            )
+        markdown_report = str(markdown_report or "")
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Report generation timed out after {timeout_seconds}s.",
+        )
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
+
+    return {
+        "report": markdown_report,
+        "language": lang,
+        "query": effective_query,
+    }
