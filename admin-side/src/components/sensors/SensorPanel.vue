@@ -1,8 +1,11 @@
 // SensorPanel.vue - Attractive Design (Updated)
 <script setup>
+import { ref, computed } from 'vue'
+import * as echarts from 'echarts'
+import VChart from 'vue-echarts'
 import logo from '@/assets/Logo.svg'
 
-defineProps({
+const props = defineProps({
   title: { type: String, default: 'Weather Data' },
   temperature: { type: [String, Number], default: '—' },
   humidity: { type: [String, Number], default: '—' },
@@ -17,7 +20,7 @@ defineProps({
   vibrAccX: { type: [String, Number], default: '—' },
   vibrAccY: { type: [String, Number], default: '—' },
   vibrAccZ: { type: [String, Number], default: '—' },
-
+  history: { type: Array, default: () => [] },
   deviceId: { type: String, default: '—' },
   observedAt: { type: String, default: '' },
   loading: { type: Boolean, default: false },
@@ -26,14 +29,72 @@ defineProps({
 })
 
 const emit = defineEmits(['refresh'])
+const isZooming = ref(false)
+
+function computeChartOption(metric, color) {
+  const data = props.history.map(r => r[metric] ?? 0)
+  const times = props.history.map(r => {
+    const date = new Date(r.time)
+    return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`
+  })
+
+  return {
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis', backgroundColor: '#222', textStyle: { color: '#fff' } },
+    grid: { top: 10, bottom: 20, left: 30, right: 10 },
+    xAxis: {
+      type: 'category',
+      data: times,
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.2)' } },
+      axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 9, interval: Math.floor(times.length / 4) },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { show: true, lineStyle: { color: 'rgba(255,255,255,0.2)' } },
+      axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 9 },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } }
+    },
+    series: [{
+      data: data,
+      type: 'line',
+      smooth: true,
+      symbol: 'none',
+      lineStyle: { color: color, width: 2 },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [
+            { offset: 0, color: color + '66' },
+            { offset: 1, color: color + '00' }
+          ]
+        }
+      }
+    }]
+  }
+}
+
+const tempChartOption = computed(() => computeChartOption('temperature', '#ff6b6b'))
+const humChartOption = computed(() => computeChartOption('humidity', '#0dcaf0'))
+const pressChartOption = computed(() => computeChartOption('pressure', '#20c997'))
+
+async function handleCardClick() {
+  isZooming.value = true
+  setTimeout(() => {
+    emit('refresh')
+    isZooming.value = false
+  }, 250)
+}
+
 </script>
 
 <template>
   <div class="card bg-dark border-0 shadow-lg h-100 overflow-hidden position-relative">
     <!-- Gradient Overlay -->
-    <div class="position-absolute top-0 start-0 w-100 h-100" 
+    <div class="position-absolute top-0 start-0 w-100 h-100"
          style="background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(147, 51, 234, 0.1) 100%); pointer-events: none;"></div>
-    
+
     <div class="card-body position-relative">
       <!-- Header Section -->
       <div class="d-flex justify-content-between align-items-start mb-4">
@@ -49,9 +110,9 @@ const emit = defineEmits(['refresh'])
             </span>
           </div>
         </div>
-        
-        <button 
-          class="btn btn-outline-light btn-sm rounded-pill px-3" 
+
+        <button
+          class="btn btn-outline-light btn-sm rounded-pill px-3"
           @click="emit('refresh')"
           :disabled="loading"
         >
@@ -70,7 +131,7 @@ const emit = defineEmits(['refresh'])
       <div class="row g-3">
         <!-- Temperature Card -->
         <div class="col-12">
-          <div class="metric-card bg-gradient text-white p-4 rounded-4 border border-danger border-opacity-25" 
+          <div class="metric-card bg-gradient text-white p-4 rounded-4 border border-danger border-opacity-25"
                style="background: linear-gradient(135deg, #dc3545 0%, #fd7e14 100%);">
             <div class="d-flex justify-content-between align-items-start">
               <div class="flex-grow-1">
@@ -91,7 +152,7 @@ const emit = defineEmits(['refresh'])
 
         <!-- Humidity Card -->
         <div class="col-12 col-md-6">
-          <div class="metric-card bg-gradient text-white p-4 rounded-4 border border-info border-opacity-25" 
+          <div class="metric-card bg-gradient text-white p-4 rounded-4 border border-info border-opacity-25"
                style="background: linear-gradient(135deg, #0dcaf0 0%, #0d6efd 100%);">
             <div class="d-flex justify-content-between align-items-start">
               <div class="flex-grow-1">
@@ -112,7 +173,7 @@ const emit = defineEmits(['refresh'])
 
         <!-- Pressure Card -->
         <div class="col-12 col-md-6">
-          <div class="metric-card bg-gradient text-white p-4 rounded-4 border border-success border-opacity-25" 
+          <div class="metric-card bg-gradient text-white p-4 rounded-4 border border-success border-opacity-25"
                style="background: linear-gradient(135deg, #20c997 0%, #198754 100%);">
             <div class="d-flex justify-content-between align-items-start">
               <div class="flex-grow-1">
@@ -223,11 +284,11 @@ const emit = defineEmits(['refresh'])
   .display-4 {
     font-size: 2.5rem;
   }
-  
+
   .display-6 {
     font-size: 1.75rem;
   }
-  
+
   .metric-card {
     padding: 1rem !important;
   }

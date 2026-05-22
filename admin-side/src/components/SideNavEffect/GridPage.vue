@@ -1,4 +1,4 @@
-<!-- S6000Dashboard.vue - Multi-Device Support -->
+<!-- S6000Dashboard.vue - Multi-Device Support with Auto-Fit Charts & Expandable Panels -->
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import api from '../../utils/api.js'
@@ -14,6 +14,13 @@ const PADDING = { left: 60, right: 30, top: 20, bottom: 50 }
 const INNER_WIDTH = SVG_WIDTH - PADDING.left - PADDING.right
 const INNER_HEIGHT = SVG_HEIGHT - PADDING.top - PADDING.bottom
 const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 70
+
+// Expanded modal chart dims (larger viewport)
+const EXP_WIDTH = 1100
+const EXP_HEIGHT = 400
+const EXP_PAD = { left: 70, right: 40, top: 30, bottom: 60 }
+const EXP_INNER_W = EXP_WIDTH - EXP_PAD.left - EXP_PAD.right
+const EXP_INNER_H = EXP_HEIGHT - EXP_PAD.top - EXP_PAD.bottom
 
 const TIME_RANGES = {
   '1h': 60,
@@ -36,7 +43,6 @@ const sensorData = ref([])
 const loading = ref(false)
 const error = ref('')
 
-// Current sensor readings
 const currentReadings = ref({
   temperature: 23.2,
   humidity: 49,
@@ -48,13 +54,18 @@ const currentReadings = ref({
 })
 
 const hoveredPoint = ref(null)
+
+// Expanded chart modal state
+const expandedChart = ref(null) // 'tempHum' | 'noise' | null
+const expandedHovered = ref(null)
+
 let refreshTimer = null
 let map = null
 let marker = null
 const mapContainer = ref(null)
 
 /* -----------------------
- * Utility Functions
+ * Utility
  * --------------------- */
 const toNum = (v) => {
   const n = Number(v)
@@ -63,161 +74,258 @@ const toNum = (v) => {
 
 const formatTimestamp = (ts) => {
   try {
-    return new Date(ts).toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
+    return new Date(ts).toLocaleTimeString('en-US', {
+      hour: '2-digit',
       minute: '2-digit',
       second: '2-digit'
     })
-  } catch {
-    return ''
-  }
+  } catch { return '' }
 }
 
 const formatShortTime = (ts) => {
   try {
-    return new Date(ts).toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
+    return new Date(ts).toLocaleTimeString('en-US', {
+      hour: '2-digit',
       minute: '2-digit'
     })
-  } catch {
-    return ''
-  }
+  } catch { return '' }
 }
 
 const minutesForRange = (range) => TIME_RANGES[range] || 180
 
 /* -----------------------
- * Chart Coordinate Helpers
+ * Auto-fit helpers
+ * Adds 5% padding above/below data range so lines never hug axes
  * --------------------- */
-const xForIndex = (i, len) => {
-  if (len <= 1) return PADDING.left + INNER_WIDTH / 2
-  return PADDING.left + (INNER_WIDTH * i) / (len - 1)
-}
-
-const yForValue = (v, min, max) => {
-  if (v == null) return null
-  const range = max - min || 1
-  const t = (v - min) / range
-  return PADDING.top + (1 - t) * INNER_HEIGHT
+const fitRange = (min, max) => {
+  if (min === max) { return { lo: min - 1, hi: max + 1 } }
+  const pad = (max - min) * 0.08
+  return { lo: min - pad, hi: max + pad }
 }
 
 /* -----------------------
- * Axis Helpers
- * -----------------------*/
+ * Coordinate helpers – normal chart
+ * --------------------- */
+const xForIndex = (i, len, pad = PADDING, iw = INNER_WIDTH) => {
+  if (len <= 1) return pad.left + iw / 2
+  return pad.left + (iw * i) / (len - 1)
+}
+
+const yForValue = (v, lo, hi, pad = PADDING, ih = INNER_HEIGHT) => {
+  if (v == null) return null
+  const range = hi - lo || 1
+  const t = (v - lo) / range
+  return pad.top + (1 - t) * ih
+}
+
+/* -----------------------
+ * Axis labels
+ * --------------------- */
 const getTimeLabels = computed(() => {
   const len = sensorData.value.length
   if (len === 0) return []
-  
   const labels = []
   const step = Math.max(1, Math.floor(len / 6))
-  
   for (let i = 0; i < len; i += step) {
-    const data = sensorData.value[i]
-    labels.push({
-      x: xForIndex(i, len),
-      text: formatShortTime(data.time)
-    })
+    labels.push({ x: xForIndex(i, len), text: formatShortTime(sensorData.value[i].time) })
   }
-  
-  // Always add last point
   if (len > 1) {
-    const lastData = sensorData.value[len - 1]
-    labels.push({
-      x: xForIndex(len - 1, len),
-      text: formatShortTime(lastData.time)
-    })
+    labels.push({ x: xForIndex(len - 1, len), text: formatShortTime(sensorData.value[len - 1].time) })
   }
-  
   return labels
 })
 
-const getYAxisLabels = (min, max, unit = '') => {
-  const range = max - min
-  const step = range / 5
+const getTimeLabelsExp = computed(() => {
+  const len = sensorData.value.length
+  if (len === 0) return []
   const labels = []
-  
-  for (let i = 0; i <= 5; i++) {
-    const value = min + (step * i)
-    const y = PADDING.top + INNER_HEIGHT - (INNER_HEIGHT * i / 5)
-    labels.push({
-      y,
-      text: value.toFixed(1) + unit
-    })
+  const step = Math.max(1, Math.floor(len / 10))
+  for (let i = 0; i < len; i += step) {
+    labels.push({ x: xForIndex(i, len, EXP_PAD, EXP_INNER_W), text: formatShortTime(sensorData.value[i].time) })
   }
-  
+  if (len > 1) {
+    labels.push({ x: xForIndex(len - 1, len, EXP_PAD, EXP_INNER_W), text: formatShortTime(sensorData.value[len - 1].time) })
+  }
   return labels
+})
+
+const makeYLabels = (lo, hi, unit = '', count = 5, pad = PADDING, ih = INNER_HEIGHT) => {
+  const step = (hi - lo) / count
+  return Array.from({ length: count + 1 }, (_, i) => ({
+    y: pad.top + ih - (ih * i / count),
+    text: (lo + step * i).toFixed(1) + unit
+  }))
 }
 
-const temperatureYLabels = computed(() => 
-  getYAxisLabels(minTemperature.value, maxTemperature.value, '°C')
-)
+/* -----------------------
+ * Stats
+ * --------------------- */
+const calcStat = (key, op) => {
+  const vals = sensorData.value.map(d => d[key]).filter(v => v != null)
+  if (!vals.length) return 0
+  if (op === 'avg') return vals.reduce((a, b) => a + b, 0) / vals.length
+  if (op === 'min') return Math.min(...vals)
+  return Math.max(...vals)
+}
 
-const humidityYLabels = computed(() => 
-  getYAxisLabels(minHumidity.value, maxHumidity.value, '%')
-)
+const avgTemperature = computed(() => calcStat('temperature', 'avg'))
+const minTemperature = computed(() => calcStat('temperature', 'min'))
+const maxTemperature = computed(() => calcStat('temperature', 'max'))
+const avgHumidity = computed(() => calcStat('humidity', 'avg'))
+const minHumidity = computed(() => calcStat('humidity', 'min'))
+const maxHumidity = computed(() => calcStat('humidity', 'max'))
+const avgPressure = computed(() => calcStat('pressure', 'avg'))
+const avgNoise = computed(() => calcStat('noise', 'avg'))
+const minNoise = computed(() => calcStat('noise', 'min'))
+const maxNoise = computed(() => calcStat('noise', 'max'))
 
-const noiseYLabels = computed(() => 
-  getYAxisLabels(minNoise.value, maxNoise.value, 'dB')
+// Auto-fit ranges
+const tempRange = computed(() => fitRange(minTemperature.value, maxTemperature.value))
+const humRange = computed(() => fitRange(minHumidity.value, maxHumidity.value))
+const noiseRange = computed(() => fitRange(minNoise.value, maxNoise.value))
+
+/* -----------------------
+ * Y-axis labels (auto-fit)
+ * --------------------- */
+const temperatureYLabels = computed(() => makeYLabels(tempRange.value.lo, tempRange.value.hi, '°C'))
+const humidityYLabels = computed(() => makeYLabels(humRange.value.lo, humRange.value.hi, '%'))
+const noiseYLabels = computed(() => makeYLabels(noiseRange.value.lo, noiseRange.value.hi, 'dB'))
+
+const temperatureYLabelsExp = computed(() => makeYLabels(tempRange.value.lo, tempRange.value.hi, '°C', 6, EXP_PAD, EXP_INNER_H))
+const humidityYLabelsExp = computed(() => makeYLabels(humRange.value.lo, humRange.value.hi, '%', 6, EXP_PAD, EXP_INNER_H))
+const noiseYLabelsExp = computed(() => makeYLabels(noiseRange.value.lo, noiseRange.value.hi, 'dB', 6, EXP_PAD, EXP_INNER_H))
+
+/* -----------------------
+ * Series builders (shared for normal + expanded)
+ * --------------------- */
+const buildSeries = (key, lo, hi, pad = PADDING, iw = INNER_WIDTH, ih = INNER_HEIGHT) => {
+  const len = sensorData.value.length
+  return sensorData.value
+    .map((row, i) => {
+      const v = row?.[key] ?? null
+      const x = xForIndex(i, len, pad, iw)
+      const y = yForValue(v, lo, hi, pad, ih)
+      return y != null ? { x, y, v, t: row.time, i } : null
+    })
+    .filter(Boolean)
+}
+
+// Normal charts
+const temperatureSeries = computed(() => buildSeries('temperature', tempRange.value.lo, tempRange.value.hi))
+const humiditySeries = computed(() => buildSeries('humidity', humRange.value.lo, humRange.value.hi))
+const noiseSeries = computed(() => buildSeries('noise', noiseRange.value.lo, noiseRange.value.hi))
+
+// Expanded modal charts
+const temperatureSeriesExp = computed(() => buildSeries('temperature', tempRange.value.lo, tempRange.value.hi, EXP_PAD, EXP_INNER_W, EXP_INNER_H))
+const humiditySeriesExp = computed(() => buildSeries('humidity', humRange.value.lo, humRange.value.hi, EXP_PAD, EXP_INNER_W, EXP_INNER_H))
+const noiseSeriesExp = computed(() => buildSeries('noise', noiseRange.value.lo, noiseRange.value.hi, EXP_PAD, EXP_INNER_W, EXP_INNER_H))
+
+const polylinePoints = (series) => series.map(p => `${p.x},${p.y}`).join(' ')
+
+const temperatureLinePoints = computed(() => polylinePoints(temperatureSeries.value))
+const humidityLinePoints = computed(() => polylinePoints(humiditySeries.value))
+const temperatureLinePointsExp = computed(() => polylinePoints(temperatureSeriesExp.value))
+const humidityLinePointsExp = computed(() => polylinePoints(humiditySeriesExp.value))
+
+/* -----------------------
+ * Noise bar chart
+ * --------------------- */
+const buildNoiseBars = (series, pad, iw, ih, len) => {
+  const spacing = iw / (len || 1)
+  const barWidth = Math.max(2, Math.min(10, spacing * 0.8))
+  const baseY = pad.top + ih
+  const lo = noiseRange.value.lo
+  const hi = noiseRange.value.hi
+  const range = hi - lo || 1
+
+  return series.map(p => {
+    const normalized = (p.v - lo) / range
+    const height = Math.max(1, normalized * ih)
+    return { x: p.x - barWidth / 2, y: baseY - height, w: barWidth, h: height, v: p.v, t: p.t, i: p.i }
+  })
+}
+
+const noiseBars = computed(() =>
+  buildNoiseBars(noiseSeries.value, PADDING, INNER_WIDTH, INNER_HEIGHT, sensorData.value.length)
+)
+const noiseBarsExp = computed(() =>
+  buildNoiseBars(noiseSeriesExp.value, EXP_PAD, EXP_INNER_W, EXP_INNER_H, sensorData.value.length)
 )
 
 /* -----------------------
- * Leaflet Map Functions
- * -----------------------*/
+ * Grid line helpers
+ * --------------------- */
+const gridLines = (count, pad, iw, ih) =>
+  Array.from({ length: count }, (_, i) => ({
+    y: pad.top + (ih / count) * (i + 1)
+  }))
+
+/* -----------------------
+ * Gauge calculations
+ * --------------------- */
+const humidityGauge = computed(() => {
+  const percent = currentReadings.value.humidity / 100
+  const offset = GAUGE_CIRCUMFERENCE * (1 - percent * 0.75)
+  let color = '#10b981'
+  if (currentReadings.value.humidity < 30) color = '#ef4444'
+  else if (currentReadings.value.humidity > 60) color = '#3b82f6'
+  return { offset, color }
+})
+
+const pressureGauge = computed(() => {
+  const percent = (currentReadings.value.pressure - 900) / 200
+  const offset = GAUGE_CIRCUMFERENCE * (1 - percent * 0.75)
+  let color = '#10b981'
+  if (currentReadings.value.pressure < 1000) color = '#3b82f6'
+  else if (currentReadings.value.pressure > 1020) color = '#ef4444'
+  return { offset, color }
+})
+
+/* -----------------------
+ * Visual helpers
+ * --------------------- */
+const temperaturePercent = computed(() =>
+  Math.min(100, Math.max(0, (currentReadings.value.temperature / 100) * 100))
+)
+
+const s6000Position = computed(() => {
+  const maxDistance = 200
+  const normalized = 1 - Math.min(currentReadings.value.distance, maxDistance) / maxDistance
+  return 20 + (200 - 20) * normalized
+})
+
+/* -----------------------
+ * Leaflet map
+ * --------------------- */
 const initMap = () => {
   if (!mapContainer.value) return
-  
-  // Destroy existing map if any
-  if (map) {
-    map.remove()
-    map = null
-  }
-  
-  // Create map centered on device location
+  if (map) { map.remove(); map = null }
   map = L.map(mapContainer.value).setView(
-    [currentReadings.value.gps.latitude, currentReadings.value.gps.longitude], 
-    14
+    [currentReadings.value.gps.latitude, currentReadings.value.gps.longitude], 14
   )
-  
-  // Add OpenStreetMap tiles
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors',
     maxZoom: 19
   }).addTo(map)
-  
-  // Add marker
-  marker = L.marker([
-    currentReadings.value.gps.latitude, 
-    currentReadings.value.gps.longitude
-  ]).addTo(map)
-  
-  marker.bindPopup(`
-    <b>S6000 Sensor - Device ${selectedDevice.value}</b><br>
+  marker = L.marker([currentReadings.value.gps.latitude, currentReadings.value.gps.longitude]).addTo(map)
+  marker.bindPopup(`<b>S6000 Device ${selectedDevice.value}</b><br>
     Lat: ${currentReadings.value.gps.latitude.toFixed(6)}<br>
-    Lon: ${currentReadings.value.gps.longitude.toFixed(6)}
-  `)
+    Lon: ${currentReadings.value.gps.longitude.toFixed(6)}`)
 }
 
 const updateMapMarker = () => {
   if (!map || !marker) return
-  
-  const newLatLng = [
-    currentReadings.value.gps.latitude, 
-    currentReadings.value.gps.longitude
-  ]
-  
-  marker.setLatLng(newLatLng)
-  marker.setPopupContent(`
-    <b>S6000 Sensor - Device ${selectedDevice.value}</b><br>
+  const ll = [currentReadings.value.gps.latitude, currentReadings.value.gps.longitude]
+  marker.setLatLng(ll)
+  marker.setPopupContent(`<b>S6000 Device ${selectedDevice.value}</b><br>
     Lat: ${currentReadings.value.gps.latitude.toFixed(6)}<br>
-    Lon: ${currentReadings.value.gps.longitude.toFixed(6)}
-  `)
-  
-  map.setView(newLatLng, map.getZoom())
+    Lon: ${currentReadings.value.gps.longitude.toFixed(6)}`)
+  map.setView(ll, map.getZoom())
 }
 
 /* -----------------------
- * Data Fetching
- * -----------------------*/
+ * Data fetching
+ * --------------------- */
 const fetchSensorData = async () => {
   loading.value = true
   error.value = ''
@@ -226,30 +334,15 @@ const fetchSensorData = async () => {
 
   try {
     const minutes = minutesForRange(timeRange.value)
-    // Fetch all data without device_id filter to get all available devices
-   // const url = `${API_BASE}/api/weather/forecast/?minutes=${minutes}`
-    console.log('Fetching data for all devices')
-    
     const data = await api.get(`/api/weather/forecast/?minutes=${minutes}`)
-    console.log('Response status: OK')
-    console.log('Data received:', data.length, 'total records')
+    if (!Array.isArray(data)) throw new Error('Invalid API response format')
 
-    if (!Array.isArray(data)) {
-      throw new Error('Invalid API response format')
-    }
-
-    // Extract unique device IDs from the data
     const uniqueDevices = [...new Set(data.map(d => String(d.device_id ?? 'unknown')))].sort()
     availableDevices.value = uniqueDevices
-    console.log('Available devices:', uniqueDevices)
 
-    // Filter data for selected device
     const filteredData = data.filter(d => String(d.device_id) === String(selectedDevice.value))
-    console.log('Filtered data for device', selectedDevice.value, ':', filteredData.length, 'records')
 
-    // Check if selected device exists
     if (filteredData.length === 0) {
-      console.log('Device not found - no data for device', selectedDevice.value)
       deviceNotFound.value = true
       sensorData.value = []
       loading.value = false
@@ -275,54 +368,29 @@ const fetchSensorData = async () => {
       .filter(d => Number.isFinite(d.time))
       .sort((a, b) => a.time - b.time)
 
-    console.log('Device found! Normalized data:', normalizedData.length, 'records')
     sensorData.value = normalizedData
     updateCurrentReadings(normalizedData)
     deviceNotFound.value = false
-
   } catch (e) {
-    console.error('Data fetch error:', e)
     error.value = e.message || 'Failed to load sensor data'
-    // Only generate simulated data on network/API errors, not for device not found
-    if (!deviceNotFound.value) {
-      console.log('Generating simulated data due to error')
-      generateSimulatedData()
-    }
+    if (!deviceNotFound.value) generateSimulatedData()
   } finally {
     loading.value = false
   }
 }
 
 const searchDevice = async () => {
-  const trimmedInput = deviceInput.value.trim()
-  
-  if (!trimmedInput) {
-    console.log('Empty device input')
-    return
-  }
-  
-  console.log('Searching for device:', trimmedInput)
-  selectedDevice.value = trimmedInput
-  
+  const t = deviceInput.value.trim()
+  if (!t) return
+  selectedDevice.value = t
   await fetchSensorData()
-  
-  console.log('After fetch - deviceNotFound:', deviceNotFound.value)
-  
-  // Reinitialize or update map if device was found
   if (!deviceNotFound.value && sensorData.value.length > 0) {
-    setTimeout(() => {
-      if (map && marker) {
-        updateMapMarker()
-      } else {
-        initMap()
-      }
-    }, 300)
+    setTimeout(() => { if (map && marker) updateMapMarker(); else initMap() }, 300)
   }
 }
 
 const updateCurrentReadings = (data) => {
-  if (data.length === 0) return
-
+  if (!data.length) return
   const latest = data[data.length - 1]
   currentReadings.value = {
     temperature: latest.temperature ?? currentReadings.value.temperature,
@@ -331,41 +399,27 @@ const updateCurrentReadings = (data) => {
     distance: latest.tof ?? currentReadings.value.distance,
     tilt: latest.angle ?? currentReadings.value.tilt,
     noise: latest.noise ?? currentReadings.value.noise,
-    gps: (latest.latitude && latest.longitude) 
+    gps: (latest.latitude && latest.longitude)
       ? { latitude: latest.latitude, longitude: latest.longitude }
       : currentReadings.value.gps
   }
-  
-  // Update map marker if GPS coordinates changed
-  if (map && marker) {
-    updateMapMarker()
-  }
+  if (map && marker) updateMapMarker()
 }
 
-/* -----------------------
- * Simulated Data (Fallback)
- * -----------------------*/
 const generateSimulatedData = () => {
   const now = Date.now()
   const minutes = minutesForRange(timeRange.value)
   const points = Math.min(minutes, 180)
-  
-  // Generate different baseline values for different devices
   const deviceOffset = parseInt(selectedDevice.value) - 101
   const tempBase = 22 + deviceOffset * 0.5
   const humBase = 47 + deviceOffset * 2
   const noiseBase = 50 + deviceOffset * 3
-  
-  // Different GPS coordinates for each device
   const gpsOffsets = [
-    { lat: 0, lng: 0 },
-    { lat: 0.002, lng: 0.003 },
-    { lat: -0.001, lng: 0.002 },
-    { lat: 0.003, lng: -0.001 },
-    { lat: -0.002, lng: -0.002 }
+    { lat: 0, lng: 0 }, { lat: 0.002, lng: 0.003 },
+    { lat: -0.001, lng: 0.002 }, { lat: 0.003, lng: -0.001 }, { lat: -0.002, lng: -0.002 }
   ]
-  const gpsOffset = gpsOffsets[deviceOffset] || gpsOffsets[0]
-  
+  const go = gpsOffsets[deviceOffset] || gpsOffsets[0]
+
   sensorData.value = Array.from({ length: points }, (_, i) => ({
     time: now - (points - i) * 60000,
     temperature: tempBase + Math.random() * 3 + Math.sin(i / 20) * 2,
@@ -377,213 +431,217 @@ const generateSimulatedData = () => {
     vibrAccX: Math.random() * 2 - 1,
     vibrAccY: Math.random() * 2 - 1,
     vibrAccZ: Math.random() * 2 - 1,
-    latitude: 39.0742 + gpsOffset.lat + (Math.random() - 0.5) * 0.001,
-    longitude: 16.3027 + gpsOffset.lng + (Math.random() - 0.5) * 0.001,
+    latitude: 39.0742 + go.lat + (Math.random() - 0.5) * 0.001,
+    longitude: 16.3027 + go.lng + (Math.random() - 0.5) * 0.001,
     device_id: selectedDevice.value
   }))
-
   updateCurrentReadings(sensorData.value)
 }
 
 /* -----------------------
- * Statistical Computations
- * -----------------------*/
-const calculateStat = (key, operation) => {
-  const values = sensorData.value
-    .map(d => d[key])
-    .filter(v => v != null)
-  
-  if (!values.length) return 0
-  
-  switch (operation) {
-    case 'avg':
-      return values.reduce((a, b) => a + b, 0) / values.length
-    case 'min':
-      return Math.min(...values)
-    case 'max':
-      return Math.max(...values)
-    default:
-      return 0
-  }
+ * Expand / collapse
+ * --------------------- */
+const openChart = (type) => {
+  expandedChart.value = type
+  expandedHovered.value = null
+  document.body.style.overflow = 'hidden'
 }
 
-// Temperature stats
-const avgTemperature = computed(() => calculateStat('temperature', 'avg'))
-const minTemperature = computed(() => calculateStat('temperature', 'min'))
-const maxTemperature = computed(() => calculateStat('temperature', 'max'))
-
-// Humidity stats
-const avgHumidity = computed(() => calculateStat('humidity', 'avg'))
-const minHumidity = computed(() => calculateStat('humidity', 'min'))
-const maxHumidity = computed(() => calculateStat('humidity', 'max'))
-
-// Pressure stats
-const avgPressure = computed(() => calculateStat('pressure', 'avg'))
-
-// Noise stats
-const avgNoise = computed(() => calculateStat('noise', 'avg'))
-const minNoise = computed(() => calculateStat('noise', 'min'))
-const maxNoise = computed(() => calculateStat('noise', 'max'))
-
-/* -----------------------
- * Chart Series Builders
- * -----------------------*/
-const buildSeries = (key, minValue, maxValue) => {
-  const len = sensorData.value.length
-  const points = []
-  
-  for (let i = 0; i < len; i++) {
-    const row = sensorData.value[i]
-    const value = row?.[key] ?? null
-    const x = xForIndex(i, len)
-    const y = yForValue(value, minValue, maxValue)
-    
-    if (y != null) {
-      points.push({ x, y, v: value, t: row.time, i })
-    }
-  }
-  
-  return points
+const closeChart = () => {
+  expandedChart.value = null
+  expandedHovered.value = null
+  document.body.style.overflow = ''
 }
 
-const temperatureSeries = computed(() => 
-  buildSeries('temperature', minTemperature.value, maxTemperature.value)
-)
-
-const humiditySeries = computed(() => 
-  buildSeries('humidity', minHumidity.value, maxHumidity.value)
-)
-
-const noiseSeries = computed(() => 
-  buildSeries('noise', minNoise.value, maxNoise.value)
-)
-
-const polylinePoints = (series) => 
-  series.map(p => `${p.x},${p.y}`).join(' ')
-
-const temperatureLinePoints = computed(() => polylinePoints(temperatureSeries.value))
-const humidityLinePoints = computed(() => polylinePoints(humiditySeries.value))
-
 /* -----------------------
- * Noise Bar Chart
- * -----------------------*/
-const noiseBars = computed(() => {
-  const series = noiseSeries.value
-  const len = sensorData.value.length || 1
-  const spacing = INNER_WIDTH / len
-  const barWidth = Math.max(2, Math.min(8, spacing * 0.8))
-  const baseY = PADDING.top + INNER_HEIGHT
-  const range = maxNoise.value - minNoise.value || 1
-
-  return series.map(p => {
-    const normalized = (p.v - minNoise.value) / range
-    const height = Math.max(1, normalized * INNER_HEIGHT)
-    
-    return {
-      x: p.x - barWidth / 2,
-      y: baseY - height,
-      w: barWidth,
-      h: height,
-      v: p.v,
-      t: p.t,
-      i: p.i
-    }
-  })
-})
-
-/* -----------------------
- * Gauge Calculations
- * -----------------------*/
-const humidityGauge = computed(() => {
-  const percent = currentReadings.value.humidity / 100
-  const offset = GAUGE_CIRCUMFERENCE * (1 - percent * 0.75)
-  
-  let color = '#10b981' // green default
-  if (currentReadings.value.humidity < 30) color = '#ef4444' // red
-  else if (currentReadings.value.humidity > 60) color = '#3b82f6' // blue
-  
-  return { offset, color }
-})
-
-const pressureGauge = computed(() => {
-  const percent = (currentReadings.value.pressure - 900) / 200
-  const offset = GAUGE_CIRCUMFERENCE * (1 - percent * 0.75)
-  
-  let color = '#10b981' // green default
-  if (currentReadings.value.pressure < 1000) color = '#3b82f6' // blue
-  else if (currentReadings.value.pressure > 1020) color = '#ef4444' // red
-  
-  return { offset, color }
-})
-
-/* -----------------------
- * Visual Components
- * -----------------------*/
-const temperaturePercent = computed(() => 
-  Math.min(100, Math.max(0, (currentReadings.value.temperature / 100) * 100))
-)
-
-const s6000Position = computed(() => {
-  const maxDistance = 200
-  const minPos = 20
-  const maxPos = 200
-  const normalized = 1 - Math.min(currentReadings.value.distance, maxDistance) / maxDistance
-  return minPos + (maxPos - minPos) * normalized
-})
-
-/* -----------------------
- * Auto-refresh Timer
- * -----------------------*/
-const stopRefreshTimer = () => {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
-  }
+ * Event handlers
+ * --------------------- */
+const handleMouseOver = (type, value, time, isExpanded = false) => {
+  const pt = { type, v: value, t: time }
+  if (isExpanded) expandedHovered.value = pt
+  else hoveredPoint.value = pt
 }
 
+const handleMouseOut = (isExpanded = false) => {
+  if (isExpanded) expandedHovered.value = null
+  else hoveredPoint.value = null
+}
+
+/* -----------------------
+ * Timer / lifecycle
+ * --------------------- */
+const stopRefreshTimer = () => { if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null } }
 const startRefreshTimer = () => {
   stopRefreshTimer()
-  
   if (!refreshSeconds.value || refreshSeconds.value <= 0) return
-  
   refreshTimer = setInterval(fetchSensorData, refreshSeconds.value * 1000)
 }
 
-/* -----------------------
- * Event Handlers
- * -----------------------*/
-const handleMouseOver = (type, value, time) => {
-  hoveredPoint.value = { type, v: value, t: time }
-}
-
-const handleMouseOut = () => {
-  hoveredPoint.value = null
-}
-
-/* -----------------------
- * Watchers & Lifecycle
- * -----------------------*/
 watch(refreshSeconds, startRefreshTimer)
 watch(timeRange, fetchSensorData)
 
 onMounted(() => {
   fetchSensorData()
   startRefreshTimer()
-  // Initialize map after a short delay to ensure container is rendered
   setTimeout(initMap, 100)
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeChart() })
 })
 
 onBeforeUnmount(() => {
   stopRefreshTimer()
-  if (map) {
-    map.remove()
-    map = null
-  }
+  if (map) { map.remove(); map = null }
+  document.body.style.overflow = ''
 })
 </script>
 
 <template>
   <div class="dashboard">
+    <!-- ===================== EXPAND MODAL ===================== -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="expandedChart" class="modal-overlay" @click.self="closeChart">
+          <div class="modal-panel">
+            <div class="modal-header">
+              <h2 class="modal-title">
+                <i :class="expandedChart === 'noise' ? 'bi bi-soundwave' : 'bi bi-graph-up'"></i>
+                {{ expandedChart === 'noise' ? 'Sound Level — Expanded' : 'Temperature & Humidity — Expanded' }}
+              </h2>
+              <button class="close-btn" @click="closeChart" aria-label="Close">
+                <i class="bi bi-x-lg"></i>
+              </button>
+            </div>
+
+            <!-- EXPANDED: Temp + Humidity -->
+            <div v-if="expandedChart === 'tempHum'" class="modal-chart-wrap" style="position:relative">
+              <svg :viewBox="`0 0 ${EXP_WIDTH} ${EXP_HEIGHT}`" style="width:100%;display:block">
+                <!-- Grid -->
+                <g style="opacity:0.06">
+                  <line v-for="(g,i) in gridLines(8, EXP_PAD, EXP_INNER_W, EXP_INNER_H)"
+                    :key="`eg-h-${i}`"
+                    :x1="EXP_PAD.left" :y1="g.y"
+                    :x2="EXP_PAD.left + EXP_INNER_W" :y2="g.y"
+                    stroke="white" stroke-width="1"/>
+                  <line v-for="j in 10" :key="`eg-v-${j}`"
+                    :x1="EXP_PAD.left + (EXP_INNER_W / 10) * j" :y1="EXP_PAD.top"
+                    :x2="EXP_PAD.left + (EXP_INNER_W / 10) * j" :y2="EXP_PAD.top + EXP_INNER_H"
+                    stroke="white" stroke-width="1"/>
+                </g>
+                <!-- Axes -->
+                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top" :x2="EXP_PAD.left" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#4a5568" stroke-width="2"/>
+                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top + EXP_INNER_H" :x2="EXP_PAD.left + EXP_INNER_W" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#4a5568" stroke-width="2"/>
+                <!-- Y temp labels -->
+                <text v-for="(l,i) in temperatureYLabelsExp" :key="`ety-${i}`"
+                  :x="EXP_PAD.left - 10" :y="l.y"
+                  text-anchor="end" dominant-baseline="middle" fill="#ff9b3d" font-size="11" font-weight="600">{{ l.text }}</text>
+                <!-- Y hum labels -->
+                <text v-for="(l,i) in humidityYLabelsExp" :key="`ehy-${i}`"
+                  :x="EXP_PAD.left + EXP_INNER_W + 10" :y="l.y"
+                  text-anchor="start" dominant-baseline="middle" fill="#3d9fff" font-size="11" font-weight="600">{{ l.text }}</text>
+                <!-- X time labels -->
+                <text v-for="(l,i) in getTimeLabelsExp" :key="`etx-${i}`"
+                  :x="l.x" :y="EXP_PAD.top + EXP_INNER_H + 22"
+                  text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600">{{ l.text }}</text>
+                <!-- Temp line -->
+                <polyline v-if="temperatureSeriesExp.length"
+                  :points="temperatureLinePointsExp"
+                  fill="none" stroke="#ff9b3d" stroke-width="2"/>
+                <!-- Hum line -->
+                <polyline v-if="humiditySeriesExp.length"
+                  :points="humidityLinePointsExp"
+                  fill="none" stroke="#3d9fff" stroke-width="2"/>
+                <!-- Temp points -->
+                <circle v-for="p in temperatureSeriesExp" :key="`etp-${p.i}`"
+                  :cx="p.x" :cy="p.y" r="4"
+                  fill="#ff9b3d" class="chart-point"
+                  @mouseover="handleMouseOver('temp', p.v, p.t, true)"
+                  @mouseout="handleMouseOut(true)">
+                  <title>{{ p.v?.toFixed(2) }}°C @ {{ formatTimestamp(p.t) }}</title>
+                </circle>
+                <!-- Hum points -->
+                <circle v-for="p in humiditySeriesExp" :key="`ehp-${p.i}`"
+                  :cx="p.x" :cy="p.y" r="4"
+                  fill="#3d9fff" class="chart-point"
+                  @mouseover="handleMouseOver('hum', p.v, p.t, true)"
+                  @mouseout="handleMouseOut(true)">
+                  <title>{{ p.v?.toFixed(2) }}% @ {{ formatTimestamp(p.t) }}</title>
+                </circle>
+                <!-- Axis labels -->
+                <text :x="EXP_PAD.left - 50" :y="EXP_PAD.top + EXP_INNER_H / 2"
+                  text-anchor="middle" fill="#ff9b3d" font-size="12" font-weight="700"
+                  :transform="`rotate(-90, ${EXP_PAD.left - 50}, ${EXP_PAD.top + EXP_INNER_H / 2})`">Temperature (°C)</text>
+                <text :x="EXP_PAD.left + EXP_INNER_W + 50" :y="EXP_PAD.top + EXP_INNER_H / 2"
+                  text-anchor="middle" fill="#3d9fff" font-size="12" font-weight="700"
+                  :transform="`rotate(90, ${EXP_PAD.left + EXP_INNER_W + 50}, ${EXP_PAD.top + EXP_INNER_H / 2})`">Humidity (%)</text>
+                <text :x="EXP_PAD.left + EXP_INNER_W / 2" :y="EXP_PAD.top + EXP_INNER_H + 50"
+                  text-anchor="middle" fill="#94a3b8" font-size="12" font-weight="700">Time</text>
+              </svg>
+              <!-- Crosshair tooltip -->
+              <div v-if="expandedHovered" class="tooltip" :class="`tooltip-${expandedHovered.type}`" style="bottom:24px;left:24px">
+                {{ expandedHovered.v?.toFixed(2) }}{{ expandedHovered.type === 'temp' ? '°C' : '%' }}
+                <div class="tooltip-sub">{{ formatTimestamp(expandedHovered.t) }}</div>
+              </div>
+            </div>
+
+            <!-- EXPANDED: Noise -->
+            <div v-if="expandedChart === 'noise'" class="modal-chart-wrap" style="position:relative">
+              <svg :viewBox="`0 0 ${EXP_WIDTH} ${EXP_HEIGHT}`" style="width:100%;display:block">
+                <!-- Grid -->
+                <g style="opacity:0.06">
+                  <line v-for="(g,i) in gridLines(8, EXP_PAD, EXP_INNER_W, EXP_INNER_H)"
+                    :key="`en-h-${i}`"
+                    :x1="EXP_PAD.left" :y1="g.y"
+                    :x2="EXP_PAD.left + EXP_INNER_W" :y2="g.y"
+                    stroke="white" stroke-width="1"/>
+                </g>
+                <!-- Axes -->
+                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top" :x2="EXP_PAD.left" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#4a5568" stroke-width="2"/>
+                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top + EXP_INNER_H" :x2="EXP_PAD.left + EXP_INNER_W" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#4a5568" stroke-width="2"/>
+                <!-- Y labels -->
+                <text v-for="(l,i) in noiseYLabelsExp" :key="`eny-${i}`"
+                  :x="EXP_PAD.left - 10" :y="l.y"
+                  text-anchor="end" dominant-baseline="middle" fill="#22c55e" font-size="11" font-weight="600">{{ l.text }}</text>
+                <!-- X labels -->
+                <text v-for="(l,i) in getTimeLabelsExp" :key="`enx-${i}`"
+                  :x="l.x" :y="EXP_PAD.top + EXP_INNER_H + 22"
+                  text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600">{{ l.text }}</text>
+                <!-- Bars -->
+                <rect v-for="b in noiseBarsExp" :key="`enb-${b.i}`"
+                  :x="b.x" :y="b.y" :width="b.w" :height="b.h" rx="1"
+                  :fill="`hsl(${120 - ((b.v - noiseRange.lo) / ((noiseRange.hi - noiseRange.lo) || 1)) * 60}, 70%, 50%)`"
+                  class="noise-bar"
+                  @mouseover="handleMouseOver('noise', b.v, b.t, true)"
+                  @mouseout="handleMouseOut(true)">
+                  <title>{{ b.v?.toFixed(2) }} dB @ {{ formatTimestamp(b.t) }}</title>
+                </rect>
+                <!-- Axis labels -->
+                <text :x="EXP_PAD.left - 50" :y="EXP_PAD.top + EXP_INNER_H / 2"
+                  text-anchor="middle" fill="#22c55e" font-size="12" font-weight="700"
+                  :transform="`rotate(-90, ${EXP_PAD.left - 50}, ${EXP_PAD.top + EXP_INNER_H / 2})`">Sound Level (dB)</text>
+                <text :x="EXP_PAD.left + EXP_INNER_W / 2" :y="EXP_PAD.top + EXP_INNER_H + 50"
+                  text-anchor="middle" fill="#94a3b8" font-size="12" font-weight="700">Time</text>
+              </svg>
+              <div v-if="expandedHovered?.type === 'noise'" class="tooltip tooltip-noise" style="bottom:24px;left:24px">
+                {{ expandedHovered.v?.toFixed(2) }} dB
+                <div class="tooltip-sub">{{ formatTimestamp(expandedHovered.t) }}</div>
+              </div>
+            </div>
+
+            <!-- Expanded legend & stats -->
+            <div class="modal-footer">
+              <template v-if="expandedChart === 'tempHum'">
+                <span class="legend-item"><span class="legend-dot temp"></span> Temperature · avg {{ avgTemperature.toFixed(2) }}°C · min {{ minTemperature.toFixed(2) }}°C · max {{ maxTemperature.toFixed(2) }}°C</span>
+                <span class="legend-item"><span class="legend-dot hum"></span> Humidity · avg {{ avgHumidity.toFixed(2) }}% · min {{ minHumidity.toFixed(2) }}% · max {{ maxHumidity.toFixed(2) }}%</span>
+              </template>
+              <template v-else>
+                <span class="legend-item"><span class="legend-dot noise"></span> Sound Level · avg {{ avgNoise.toFixed(2) }} dB · min {{ minNoise.toFixed(2) }} dB · max {{ maxNoise.toFixed(2) }} dB</span>
+              </template>
+              <span class="legend-item muted">{{ sensorData.length }} data points · {{ timeRange }} · Device {{ selectedDevice }}</span>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <!-- Header -->
     <header class="header">
       <div class="header-left">
@@ -601,7 +659,7 @@ onBeforeUnmount(() => {
           <i class="bi bi-clock"></i> {{ timeRange }}
         </span>
         <span class="header-pill">
-          <i class="bi bi-arrow-repeat"></i> 
+          <i class="bi bi-arrow-repeat"></i>
           {{ refreshSeconds ? `${refreshSeconds}s` : 'off' }}
         </span>
         <span class="header-pill" :class="{ 'pill-active': !loading }">
@@ -615,24 +673,13 @@ onBeforeUnmount(() => {
     <section class="panel">
       <div class="controls-grid">
         <div>
-          <label class="label">
-            <i class="bi bi-hdd-rack"></i> Device ID
-          </label>
+          <label class="label"><i class="bi bi-hdd-rack"></i> Device ID</label>
           <div class="device-search">
-            <input
-              v-model="deviceInput"
-              type="text"
-              class="input"
-              placeholder="Enter device ID (e.g., 101)"
-              @keyup.enter="searchDevice"
-            />
-            <button 
-              class="btn btn-search" 
-              @click="searchDevice"
-              :disabled="loading || !deviceInput.trim()"
-            >
-              <i class="bi bi-search"></i>
-              Search
+            <input v-model="deviceInput" type="text" class="input"
+              placeholder="Enter device ID (e.g., 101)" @keyup.enter="searchDevice"/>
+            <button class="btn btn-search" @click="searchDevice"
+              :disabled="loading || !deviceInput.trim()">
+              <i class="bi bi-search"></i> Search
             </button>
           </div>
           <div class="help">
@@ -640,11 +687,8 @@ onBeforeUnmount(() => {
             {{ availableDevices.length ? availableDevices.join(', ') : (loading ? 'Loading…' : '—') }}
           </div>
         </div>
-
         <div>
-          <label class="label">
-            <i class="bi bi-calendar-range"></i> Time Range
-          </label>
+          <label class="label"><i class="bi bi-calendar-range"></i> Time Range</label>
           <select v-model="timeRange" class="input">
             <option value="1h">Last 1 Hour</option>
             <option value="3h">Last 3 Hours</option>
@@ -652,11 +696,8 @@ onBeforeUnmount(() => {
             <option value="24h">Last 24 Hours</option>
           </select>
         </div>
-
         <div>
-          <label class="label">
-            <i class="bi bi-arrow-repeat"></i> Auto Refresh
-          </label>
+          <label class="label"><i class="bi bi-arrow-repeat"></i> Auto Refresh</label>
           <select v-model.number="refreshSeconds" class="input">
             <option :value="0">Off</option>
             <option :value="10">Every 10s</option>
@@ -664,13 +705,8 @@ onBeforeUnmount(() => {
             <option :value="60">Every 60s</option>
           </select>
         </div>
-
         <div class="load-wrap">
-          <button 
-            class="btn btn-primary" 
-            @click="fetchSensorData" 
-            :disabled="loading"
-          >
+          <button class="btn btn-primary" @click="fetchSensorData" :disabled="loading">
             <i :class="loading ? 'bi bi-hourglass-split' : 'bi bi-arrow-clockwise'"></i>
             {{ loading ? 'Loading…' : 'Refresh Data' }}
           </button>
@@ -690,34 +726,20 @@ onBeforeUnmount(() => {
           <p>Please check the device ID and try again.</p>
         </div>
       </div>
-
-      <!-- Debug info - remove in production -->
-      <div v-if="false" style="margin-top: 10px; padding: 10px; background: #333; border-radius: 4px; font-size: 11px;">
-        <div>deviceNotFound: {{ deviceNotFound }}</div>
-        <div>selectedDevice: {{ selectedDevice }}</div>
-        <div>sensorData.length: {{ sensorData.length }}</div>
-        <div>loading: {{ loading }}</div>
-      </div>
     </section>
 
     <!-- Main Grid -->
     <div v-if="!deviceNotFound" class="main-grid">
+
       <!-- Thermometer -->
       <section class="panel thermometer-panel">
-        <h3 class="chart-title">
-          <i class="bi bi-thermometer-half"></i> Temperature
-        </h3>
+        <h3 class="chart-title"><i class="bi bi-thermometer-half"></i> Temperature</h3>
         <div class="thermometer-container">
           <div class="thermometer-scale">
-            <span>100°C</span>
-            <span>50°C</span>
-            <span>0°C</span>
+            <span>100°C</span><span>50°C</span><span>0°C</span>
           </div>
           <div class="thermometer-tube">
-            <div 
-              class="thermometer-fill" 
-              :style="{ height: temperaturePercent + '%' }"
-            ></div>
+            <div class="thermometer-fill" :style="{ height: temperaturePercent + '%' }"></div>
           </div>
           <div class="thermometer-bulb"></div>
         </div>
@@ -725,395 +747,160 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- Temperature & Humidity Chart -->
-      <section class="panel chart-panel">
+      <section class="panel chart-panel expandable-panel" @click="openChart('tempHum')">
         <h3 class="chart-title">
-          <i class="bi bi-graph-up"></i> Temperature & Humidity
+          <i class="bi bi-graph-up"></i> Temperature &amp; Humidity
+          <span class="expand-hint"><i class="bi bi-arrows-fullscreen"></i> click to expand</span>
         </h3>
         <div class="chart-wrap">
           <svg :viewBox="`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`">
-            <!-- Grid Lines -->
-            <g style="opacity: 0.08">
-              <line 
-                v-for="i in 8" 
-                :key="`grid-h-${i}`" 
-                :x1="PADDING.left" 
-                :y1="PADDING.top + (INNER_HEIGHT / 8) * i" 
-                :x2="PADDING.left + INNER_WIDTH" 
-                :y2="PADDING.top + (INNER_HEIGHT / 8) * i" 
-                stroke="white" 
-                stroke-width="1"
-              />
+            <!-- Grid -->
+            <g style="opacity:0.08">
+              <line v-for="i in 8" :key="`grid-h-${i}`"
+                :x1="PADDING.left" :y1="PADDING.top + (INNER_HEIGHT / 8) * i"
+                :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + (INNER_HEIGHT / 8) * i"
+                stroke="white" stroke-width="1"/>
             </g>
-
             <!-- Axes -->
-            <line 
-              :x1="PADDING.left" 
-              :y1="PADDING.top" 
-              :x2="PADDING.left" 
-              :y2="PADDING.top + INNER_HEIGHT" 
-              stroke="#4a5568" 
-              stroke-width="2"
-            />
-            <line 
-              :x1="PADDING.left" 
-              :y1="PADDING.top + INNER_HEIGHT" 
-              :x2="PADDING.left + INNER_WIDTH" 
-              :y2="PADDING.top + INNER_HEIGHT" 
-              stroke="#4a5568" 
-              stroke-width="2"
-            />
-
-            <!-- Y-axis labels (Temperature - left side) -->
-            <g>
-              <text
-                v-for="(label, i) in temperatureYLabels"
-                :key="`temp-y-${i}`"
-                :x="PADDING.left - 10"
-                :y="label.y"
-                text-anchor="end"
-                alignment-baseline="middle"
-                fill="#ff9b3d"
-                font-size="10"
-                font-weight="600"
-              >
-                {{ label.text }}
-              </text>
-            </g>
-
-            <!-- Y-axis labels (Humidity - right side) -->
-            <g>
-              <text
-                v-for="(label, i) in humidityYLabels"
-                :key="`hum-y-${i}`"
-                :x="PADDING.left + INNER_WIDTH + 10"
-                :y="label.y"
-                text-anchor="start"
-                alignment-baseline="middle"
-                fill="#3d9fff"
-                font-size="10"
-                font-weight="600"
-              >
-                {{ label.text }}
-              </text>
-            </g>
-
-            <!-- X-axis labels (Time) -->
-            <g>
-              <text
-                v-for="(label, i) in getTimeLabels"
-                :key="`time-${i}`"
-                :x="label.x"
-                :y="PADDING.top + INNER_HEIGHT + 20"
-                text-anchor="middle"
-                fill="#94a3b8"
-                font-size="9"
-                font-weight="600"
-              >
-                {{ label.text }}
-              </text>
-            </g>
-
-            <!-- Temperature Line -->
-            <polyline
-              v-if="temperatureSeries.length"
-              :points="temperatureLinePoints"
-              fill="none"
-              stroke="#ff9b3d"
-              stroke-width="0.5"
-              style="filter: drop-shadow(0 0 0.5px rgba(255, 155, 61, 0.5))"
-            />
-
-            <!-- Humidity Line -->
-            <polyline
-              v-if="humiditySeries.length"
-              :points="humidityLinePoints"
-              fill="none"
-              stroke="#3d9fff"
-              stroke-width="0.5"
-              style="filter: drop-shadow(0 0 0.5px rgba(61, 159, 255, 0.5))"
-            />
-
-            <!-- Temperature Points -->
-            <circle
-              v-for="p in temperatureSeries"
-              :key="`temp-${p.i}`"
-              :cx="p.x"
-              :cy="p.y"
-              r="3"
-              fill="#ff9b3d"
-              class="chart-point"
-              @mouseover="handleMouseOver('temp', p.v, p.t)"
-              @mouseout="handleMouseOut"
-            >
-              <title>{{ p.v?.toFixed(1) }}°C</title>
+            <line :x1="PADDING.left" :y1="PADDING.top" :x2="PADDING.left" :y2="PADDING.top + INNER_HEIGHT" stroke="#4a5568" stroke-width="2"/>
+            <line :x1="PADDING.left" :y1="PADDING.top + INNER_HEIGHT" :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + INNER_HEIGHT" stroke="#4a5568" stroke-width="2"/>
+            <!-- Y temp -->
+            <text v-for="(l,i) in temperatureYLabels" :key="`ty-${i}`"
+              :x="PADDING.left - 10" :y="l.y"
+              text-anchor="end" dominant-baseline="middle" fill="#ff9b3d" font-size="10" font-weight="600">{{ l.text }}</text>
+            <!-- Y hum -->
+            <text v-for="(l,i) in humidityYLabels" :key="`hy-${i}`"
+              :x="PADDING.left + INNER_WIDTH + 10" :y="l.y"
+              text-anchor="start" dominant-baseline="middle" fill="#3d9fff" font-size="10" font-weight="600">{{ l.text }}</text>
+            <!-- X time -->
+            <text v-for="(l,i) in getTimeLabels" :key="`tx-${i}`"
+              :x="l.x" :y="PADDING.top + INNER_HEIGHT + 20"
+              text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="600">{{ l.text }}</text>
+            <!-- Lines -->
+            <polyline v-if="temperatureSeries.length" :points="temperatureLinePoints"
+              fill="none" stroke="#ff9b3d" stroke-width="1.5"/>
+            <polyline v-if="humiditySeries.length" :points="humidityLinePoints"
+              fill="none" stroke="#3d9fff" stroke-width="1.5"/>
+            <!-- Points -->
+            <circle v-for="p in temperatureSeries" :key="`tp-${p.i}`"
+              :cx="p.x" :cy="p.y" r="3" fill="#ff9b3d" class="chart-point"
+              @mouseover.stop="handleMouseOver('temp', p.v, p.t)"
+              @mouseout.stop="handleMouseOut">
+              <title>{{ p.v?.toFixed(2) }}°C</title>
             </circle>
-
-            <!-- Humidity Points -->
-            <circle
-              v-for="p in humiditySeries"
-              :key="`hum-${p.i}`"
-              :cx="p.x"
-              :cy="p.y"
-              r="3"
-              fill="#3d9fff"
-              class="chart-point"
-              @mouseover="handleMouseOver('hum', p.v, p.t)"
-              @mouseout="handleMouseOut"
-            >
-              <title>{{ p.v?.toFixed(1) }}%</title>
+            <circle v-for="p in humiditySeries" :key="`hp-${p.i}`"
+              :cx="p.x" :cy="p.y" r="3" fill="#3d9fff" class="chart-point"
+              @mouseover.stop="handleMouseOver('hum', p.v, p.t)"
+              @mouseout.stop="handleMouseOut">
+              <title>{{ p.v?.toFixed(2) }}%</title>
             </circle>
-
-            <!-- Y-axis label text -->
-            <text
-              :x="PADDING.left - 45"
-              :y="PADDING.top + INNER_HEIGHT / 2"
-              text-anchor="middle"
-              fill="#ff9b3d"
-              font-size="11"
-              font-weight="700"
-              transform="rotate(-90, 15, 120)"
-            >
-              Temperature (°C)
-            </text>
-
-            <text
-              :x="PADDING.left + INNER_WIDTH + 45"
-              :y="PADDING.top + INNER_HEIGHT / 2"
-              text-anchor="middle"
-              fill="#3d9fff"
-              font-size="11"
-              font-weight="700"
-              transform="rotate(90, 705, 120)"
-            >
-              Humidity (%)
-            </text>
-
-            <!-- X-axis label -->
-            <text
-              :x="PADDING.left + INNER_WIDTH / 2"
-              :y="PADDING.top + INNER_HEIGHT + 40"
-              text-anchor="middle"
-              fill="#94a3b8"
-              font-size="11"
-              font-weight="700"
-            >
-              Time
-            </text>
+            <!-- Axis text -->
+            <text :x="PADDING.left - 45" :y="PADDING.top + INNER_HEIGHT / 2"
+              text-anchor="middle" fill="#ff9b3d" font-size="11" font-weight="700"
+              transform="rotate(-90, 15, 120)">Temperature (°C)</text>
+            <text :x="PADDING.left + INNER_WIDTH + 45" :y="PADDING.top + INNER_HEIGHT / 2"
+              text-anchor="middle" fill="#3d9fff" font-size="11" font-weight="700"
+              transform="rotate(90, 705, 120)">Humidity (%)</text>
+            <text :x="PADDING.left + INNER_WIDTH / 2" :y="PADDING.top + INNER_HEIGHT + 40"
+              text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="700">Time</text>
           </svg>
-
-          <div v-if="hoveredPoint" class="tooltip" :class="`tooltip-${hoveredPoint.type}`">
-            {{ hoveredPoint.v?.toFixed(1) }}{{ hoveredPoint.type === 'temp' ? '°C' : '%' }}
+          <div v-if="hoveredPoint && ['temp','hum'].includes(hoveredPoint.type)" class="tooltip" :class="`tooltip-${hoveredPoint.type}`">
+            {{ hoveredPoint.v?.toFixed(2) }}{{ hoveredPoint.type === 'temp' ? '°C' : '%' }}
             <div class="tooltip-sub">{{ formatTimestamp(hoveredPoint.t) }}</div>
           </div>
         </div>
         <div class="legend">
-          <span class="legend-item">
-            <span class="legend-dot temp"></span> Temperature
-          </span>
-          <span class="legend-item">
-            <span class="legend-dot hum"></span> Humidity
-          </span>
+          <span class="legend-item"><span class="legend-dot temp"></span> Temperature</span>
+          <span class="legend-item"><span class="legend-dot hum"></span> Humidity</span>
         </div>
       </section>
 
       <!-- Humidity Gauge -->
       <section class="panel gauge-panel-humidity">
-        <h3 class="chart-title">
-          <i class="bi bi-droplet-half"></i> Humidity
-        </h3>
+        <h3 class="chart-title"><i class="bi bi-droplet-half"></i> Humidity</h3>
         <div class="gauge-container">
           <svg class="gauge-svg" width="160" height="160" viewBox="0 0 160 160">
-            <circle 
-              cx="80" 
-              cy="80" 
-              r="70" 
-              fill="none" 
-              stroke="rgba(255,255,255,0.1)" 
-              stroke-width="12"
-            />
-            <circle 
-              cx="80" 
-              cy="80" 
-              r="70" 
-              fill="none" 
-              :stroke="humidityGauge.color" 
-              stroke-width="12"
+            <circle cx="80" cy="80" r="70" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="12"/>
+            <circle cx="80" cy="80" r="70" fill="none"
+              :stroke="humidityGauge.color" stroke-width="12"
               :stroke-dasharray="GAUGE_CIRCUMFERENCE"
               :stroke-dashoffset="humidityGauge.offset"
-              stroke-linecap="round"
-              class="gauge-fill"
-            />
+              stroke-linecap="round" class="gauge-fill"/>
           </svg>
           <div class="gauge-value">{{ currentReadings.humidity.toFixed(0) }}%</div>
         </div>
       </section>
 
       <!-- Sound Level Chart -->
-      <section class="panel chart-panel-wide">
+      <section class="panel chart-panel-wide expandable-panel" @click="openChart('noise')">
         <h3 class="chart-title">
           <i class="bi bi-soundwave"></i> Sound Level
+          <span class="expand-hint"><i class="bi bi-arrows-fullscreen"></i> click to expand</span>
         </h3>
         <div class="chart-wrap-noise">
           <svg :viewBox="`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`">
-            <!-- Grid Lines -->
-            <g style="opacity: 0.08">
-              <line 
-                v-for="i in 8" 
-                :key="`noise-grid-${i}`" 
-                :x1="PADDING.left" 
-                :y1="PADDING.top + (INNER_HEIGHT / 8) * i" 
-                :x2="PADDING.left + INNER_WIDTH" 
-                :y2="PADDING.top + (INNER_HEIGHT / 8) * i" 
-                stroke="white" 
-                stroke-width="1"
-              />
+            <!-- Grid -->
+            <g style="opacity:0.08">
+              <line v-for="i in 8" :key="`ng-${i}`"
+                :x1="PADDING.left" :y1="PADDING.top + (INNER_HEIGHT / 8) * i"
+                :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + (INNER_HEIGHT / 8) * i"
+                stroke="white" stroke-width="1"/>
             </g>
-
             <!-- Axes -->
-            <line 
-              :x1="PADDING.left" 
-              :y1="PADDING.top" 
-              :x2="PADDING.left" 
-              :y2="PADDING.top + INNER_HEIGHT" 
-              stroke="#4a5568" 
-              stroke-width="2"
-            />
-            <line 
-              :x1="PADDING.left" 
-              :y1="PADDING.top + INNER_HEIGHT" 
-              :x2="PADDING.left + INNER_WIDTH" 
-              :y2="PADDING.top + INNER_HEIGHT" 
-              stroke="#4a5568" 
-              stroke-width="2"
-            />
-
-            <!-- Y-axis labels (Noise - left side) -->
-            <g>
-              <text
-                v-for="(label, i) in noiseYLabels"
-                :key="`noise-y-${i}`"
-                :x="PADDING.left - 10"
-                :y="label.y"
-                text-anchor="end"
-                alignment-baseline="middle"
-                fill="#22c55e"
-                font-size="10"
-                font-weight="600"
-              >
-                {{ label.text }}
-              </text>
-            </g>
-
-            <!-- X-axis labels (Time) -->
-            <g>
-              <text
-                v-for="(label, i) in getTimeLabels"
-                :key="`noise-time-${i}`"
-                :x="label.x"
-                :y="PADDING.top + INNER_HEIGHT + 20"
-                text-anchor="middle"
-                fill="#94a3b8"
-                font-size="9"
-                font-weight="600"
-              >
-                {{ label.text }}
-              </text>
-            </g>
-
-            <!-- Noise Bars -->
-            <rect
-              v-for="b in noiseBars"
-              :key="`noise-${b.i}`"
-              :x="b.x"
-              :y="b.y"
-              :width="b.w"
-              :height="b.h"
-              rx="1"
-              :fill="`hsl(${120 - ((b.v - minNoise) / (maxNoise - minNoise)) * 60}, 70%, 50%)`"
+            <line :x1="PADDING.left" :y1="PADDING.top" :x2="PADDING.left" :y2="PADDING.top + INNER_HEIGHT" stroke="#4a5568" stroke-width="2"/>
+            <line :x1="PADDING.left" :y1="PADDING.top + INNER_HEIGHT" :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + INNER_HEIGHT" stroke="#4a5568" stroke-width="2"/>
+            <!-- Y labels -->
+            <text v-for="(l,i) in noiseYLabels" :key="`ny-${i}`"
+              :x="PADDING.left - 10" :y="l.y"
+              text-anchor="end" dominant-baseline="middle" fill="#22c55e" font-size="10" font-weight="600">{{ l.text }}</text>
+            <!-- X labels -->
+            <text v-for="(l,i) in getTimeLabels" :key="`nt-${i}`"
+              :x="l.x" :y="PADDING.top + INNER_HEIGHT + 20"
+              text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="600">{{ l.text }}</text>
+            <!-- Bars -->
+            <rect v-for="b in noiseBars" :key="`nb-${b.i}`"
+              :x="b.x" :y="b.y" :width="b.w" :height="b.h" rx="1"
+              :fill="`hsl(${120 - ((b.v - noiseRange.lo) / ((noiseRange.hi - noiseRange.lo) || 1)) * 60}, 70%, 50%)`"
               class="noise-bar"
-              @mouseover="handleMouseOver('noise', b.v, b.t)"
-              @mouseout="handleMouseOut"
-            >
-              <title>{{ b.v?.toFixed(1) }} dB</title>
+              @mouseover.stop="handleMouseOver('noise', b.v, b.t)"
+              @mouseout.stop="handleMouseOut">
+              <title>{{ b.v?.toFixed(2) }} dB</title>
             </rect>
-
-            <!-- Y-axis label text -->
-            <text
-              :x="PADDING.left - 45"
-              :y="PADDING.top + INNER_HEIGHT / 2"
-              text-anchor="middle"
-              fill="#22c55e"
-              font-size="11"
-              font-weight="700"
-              transform="rotate(-90, 15, 120)"
-            >
-              Sound Level (dB)
-            </text>
-
-            <!-- X-axis label -->
-            <text
-              :x="PADDING.left + INNER_WIDTH / 2"
-              :y="PADDING.top + INNER_HEIGHT + 40"
-              text-anchor="middle"
-              fill="#94a3b8"
-              font-size="11"
-              font-weight="700"
-            >
-              Time
-            </text>
+            <!-- Axis text -->
+            <text :x="PADDING.left - 45" :y="PADDING.top + INNER_HEIGHT / 2"
+              text-anchor="middle" fill="#22c55e" font-size="11" font-weight="700"
+              transform="rotate(-90, 15, 120)">Sound Level (dB)</text>
+            <text :x="PADDING.left + INNER_WIDTH / 2" :y="PADDING.top + INNER_HEIGHT + 40"
+              text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="700">Time</text>
           </svg>
-
           <div v-if="hoveredPoint?.type === 'noise'" class="tooltip tooltip-noise">
-            {{ hoveredPoint.v?.toFixed(1) }} dB
+            {{ hoveredPoint.v?.toFixed(2) }} dB
             <div class="tooltip-sub">{{ formatTimestamp(hoveredPoint.t) }}</div>
           </div>
         </div>
       </section>
 
-      <!-- Tilt Visualization -->
+      <!-- Tilt -->
       <section class="panel svg-panel">
-        <h3 class="chart-title">
-          <i class="bi bi-phone-landscape"></i> Tilt
-        </h3>
+        <h3 class="chart-title"><i class="bi bi-phone-landscape"></i> Tilt</h3>
         <div class="svg-display">
           <div class="tilt-viz">
             <div class="tilt-label">{{ currentReadings.tilt.toFixed(1) }}°</div>
-            <div 
-              class="tilt-indicator" 
-              :style="{ transform: `rotate(${currentReadings.tilt}deg)` }"
-            ></div>
-            <div 
-              class="tilt-device"
-              :style="{ transform: `translateX(-50%) rotate(${currentReadings.tilt}deg)` }"
-            >
-              S6000
-            </div>
+            <div class="tilt-indicator" :style="{ transform: `rotate(${currentReadings.tilt}deg)` }"></div>
+            <div class="tilt-device" :style="{ transform: `translateX(-50%) rotate(${currentReadings.tilt}deg)` }">S6000</div>
             <div class="tilt-surface"></div>
           </div>
         </div>
       </section>
 
-      <!-- Distance Visualization -->
+      <!-- Distance -->
       <section class="panel svg-panel">
-        <h3 class="chart-title">
-          <i class="bi bi-rulers"></i> Distance
-        </h3>
+        <h3 class="chart-title"><i class="bi bi-rulers"></i> Distance</h3>
         <div class="svg-display">
           <div class="distance-viz">
-            <div 
-              class="s6000-box" 
-              :style="{ left: `${s6000Position}px` }"
-            >
-              S6000
-            </div>
+            <div class="s6000-box" :style="{ left: `${s6000Position}px` }">S6000</div>
             <div class="obstacle"></div>
-            <div 
-              class="distance-line" 
-              :style="{ 
-                left: `${s6000Position + 70}px`,
-                width: `${220 - s6000Position}px`
-              }"
-            ></div>
+            <div class="distance-line" :style="{ left: `${s6000Position + 70}px`, width: `${220 - s6000Position}px` }"></div>
             <div class="distance-label">{{ currentReadings.distance.toFixed(0) }}cm</div>
           </div>
         </div>
@@ -1121,88 +908,55 @@ onBeforeUnmount(() => {
 
       <!-- Pressure Gauge -->
       <section class="panel gauge-panel">
-        <h3 class="chart-title">
-          <i class="bi bi-speedometer2"></i> Pressure
-        </h3>
+        <h3 class="chart-title"><i class="bi bi-speedometer2"></i> Pressure</h3>
         <div class="gauge-container">
           <svg class="gauge-svg" width="160" height="160" viewBox="0 0 160 160">
-            <circle 
-              cx="80" 
-              cy="80" 
-              r="70" 
-              fill="none" 
-              stroke="rgba(255,255,255,0.1)" 
-              stroke-width="12"
-            />
-            <circle 
-              cx="80" 
-              cy="80" 
-              r="70" 
-              fill="none" 
-              :stroke="pressureGauge.color" 
-              stroke-width="12"
+            <circle cx="80" cy="80" r="70" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="12"/>
+            <circle cx="80" cy="80" r="70" fill="none"
+              :stroke="pressureGauge.color" stroke-width="12"
               :stroke-dasharray="GAUGE_CIRCUMFERENCE"
               :stroke-dashoffset="pressureGauge.offset"
-              stroke-linecap="round"
-              class="gauge-fill"
-            />
+              stroke-linecap="round" class="gauge-fill"/>
           </svg>
-          <div class="gauge-value" style="font-size: 20px;">
-            {{ currentReadings.pressure.toFixed(0) /1000 }}
-            <span style="font-size: 12px; color: var(--muted);"> kPa</span>
+          <div class="gauge-value" style="font-size:20px">
+            {{ (currentReadings.pressure / 1000).toFixed(3) }}
+            <span style="font-size:12px;color:var(--muted)"> kPa</span>
           </div>
         </div>
       </section>
 
-      <!-- GPS Map with Leaflet -->
+      <!-- GPS Map -->
       <section class="panel map-panel">
-        <h3 class="chart-title">
-          <i class="bi bi-geo-alt"></i> GPS Location
-        </h3>
+        <h3 class="chart-title"><i class="bi bi-geo-alt"></i> GPS Location</h3>
         <div class="map-container">
           <div ref="mapContainer" class="leaflet-map"></div>
           <div class="map-coords">
-            {{ currentReadings.gps.latitude.toFixed(6) }}°N, 
+            {{ currentReadings.gps.latitude.toFixed(6) }}°N,
             {{ currentReadings.gps.longitude.toFixed(6) }}°E
           </div>
         </div>
       </section>
     </div>
 
-    <!-- Statistics Footer -->
+    <!-- Stats Footer -->
     <footer v-if="!deviceNotFound" class="stats-grid">
       <div class="stat stat-temp">
-        <div class="stat-label">
-          <i class="bi bi-thermometer-half"></i> Temperature
-        </div>
+        <div class="stat-label"><i class="bi bi-thermometer-half"></i> Temperature</div>
         <div class="stat-value">{{ avgTemperature.toFixed(1) }}°C</div>
-        <div class="stat-sub">
-          Min: {{ minTemperature.toFixed(1) }}°C · Max: {{ maxTemperature.toFixed(1) }}°C
-        </div>
+        <div class="stat-sub">Min: {{ minTemperature.toFixed(1) }}°C · Max: {{ maxTemperature.toFixed(1) }}°C</div>
       </div>
-
       <div class="stat stat-hum">
-        <div class="stat-label">
-          <i class="bi bi-droplet-half"></i> Humidity
-        </div>
+        <div class="stat-label"><i class="bi bi-droplet-half"></i> Humidity</div>
         <div class="stat-value">{{ avgHumidity.toFixed(1) }}%</div>
-        <div class="stat-sub">
-          Min: {{ minHumidity.toFixed(1) }}% · Max: {{ maxHumidity.toFixed(1) }}%
-        </div>
+        <div class="stat-sub">Min: {{ minHumidity.toFixed(1) }}% · Max: {{ maxHumidity.toFixed(1) }}%</div>
       </div>
-
       <div class="stat stat-pres">
-        <div class="stat-label">
-          <i class="bi bi-speedometer2"></i> Pressure
-        </div>
-        <div class="stat-value">{{ avgPressure.toFixed(1) /1000 }} kPa</div>
+        <div class="stat-label"><i class="bi bi-speedometer2"></i> Pressure</div>
+        <div class="stat-value">{{ (avgPressure / 1000).toFixed(3) }} kPa</div>
         <div class="stat-sub">Average over {{ timeRange }}</div>
       </div>
-
       <div class="stat stat-count">
-        <div class="stat-label">
-          <i class="bi bi-graph-up"></i> Data Points
-        </div>
+        <div class="stat-label"><i class="bi bi-graph-up"></i> Data Points</div>
         <div class="stat-value">{{ sensorData.length }}</div>
         <div class="stat-sub">Range: {{ timeRange }} · Device: {{ selectedDevice }}</div>
       </div>
@@ -1230,6 +984,110 @@ onBeforeUnmount(() => {
   color: var(--text);
 }
 
+/* ============ MODAL ============ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(6px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal-panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  width: 100%;
+  max-width: 1160px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #1f2937;
+  flex-shrink: 0;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.close-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid #1f2937;
+  color: var(--muted);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: background 0.2s, color 0.2s;
+}
+.close-btn:hover { background: rgba(255,255,255,0.12); color: var(--text); }
+
+.modal-chart-wrap {
+  padding: 16px 20px;
+  background: #0b1118;
+  flex: 1;
+}
+
+.modal-footer {
+  padding: 12px 20px;
+  border-top: 1px solid #1f2937;
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+/* Transition */
+.modal-enter-active, .modal-leave-active { transition: opacity 0.22s ease, transform 0.22s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; transform: scale(0.97); }
+
+/* ============ EXPAND HINT ============ */
+.expandable-panel {
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.expandable-panel:hover { border-color: #374151; }
+
+.expand-hint {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: #4b5563;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 0.2s;
+}
+.expandable-panel:hover .expand-hint { color: var(--accent); }
+
+/* ============ HEADER ============ */
 .header {
   background: rgba(17, 24, 39, 0.8);
   padding: 16px 18px;
@@ -1243,11 +1101,7 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(8px);
 }
 
-.header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
+.header-left { display: flex; flex-direction: column; gap: 4px; }
 
 .header-title {
   color: var(--text);
@@ -1260,17 +1114,9 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-.header-subtitle {
-  color: var(--muted);
-  margin: 0;
-  font-size: 12px;
-}
+.header-subtitle { color: var(--muted); margin: 0; font-size: 12px; }
 
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+.header-right { display: flex; align-items: center; gap: 8px; }
 
 .header-pill {
   background: #0f172a;
@@ -1288,17 +1134,10 @@ onBeforeUnmount(() => {
   transition: all 0.3s ease;
 }
 
-.device-pill {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: rgba(96, 165, 250, 0.1);
-}
+.device-pill { border-color: var(--accent); color: var(--accent); background: rgba(96, 165, 250, 0.1); }
+.pill-active { border-color: var(--accent-2); color: var(--accent-2); }
 
-.pill-active {
-  border-color: var(--accent-2);
-  color: var(--accent-2);
-}
-
+/* ============ PANELS ============ */
 .panel {
   background: var(--panel);
   padding: 16px;
@@ -1306,12 +1145,9 @@ onBeforeUnmount(() => {
   border: 1px solid var(--panel-border);
   box-shadow: 0 10px 24px rgba(0,0,0,0.2);
   margin-bottom: 16px;
-  transition: box-shadow 0.3s ease;
+  transition: box-shadow 0.3s ease, border-color 0.2s;
 }
-
-.panel:hover {
-  box-shadow: 0 14px 32px rgba(0,0,0,0.3);
-}
+.panel:hover { box-shadow: 0 14px 32px rgba(0,0,0,0.3); }
 
 .controls-grid {
   display: grid;
@@ -1319,26 +1155,11 @@ onBeforeUnmount(() => {
   gap: 15px;
 }
 
-.device-search {
-  display: flex;
-  gap: 8px;
-}
+.device-search { display: flex; gap: 8px; }
+.device-search .input { flex: 1; }
 
-.device-search .input {
-  flex: 1;
-}
-
-.help {
-  margin-top: 8px;
-  color: #94a3b8;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.help strong {
-  color: #cbd5e0;
-  font-weight: 700;
-}
+.help { margin-top: 8px; color: #94a3b8; font-size: 11px; line-height: 1.4; }
+.help strong { color: #cbd5e0; font-weight: 700; }
 
 .btn-search {
   background: var(--accent);
@@ -1347,7 +1168,6 @@ onBeforeUnmount(() => {
   padding: 8px 16px;
   white-space: nowrap;
 }
-
 .btn-search:hover:not(:disabled) {
   background: #4a8fd8;
   box-shadow: 0 0 14px rgba(96, 165, 250, 0.4);
@@ -1366,68 +1186,17 @@ onBeforeUnmount(() => {
   font-size: 14px;
   animation: slideDown 0.3s ease-out;
 }
-
 @keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
+.device-not-found i { font-size: 40px; color: #ef4444; flex-shrink: 0; animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+.device-not-found h3 { margin: 0 0 12px 0; color: #fca5a5; font-size: 20px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
+.device-not-found p { margin: 6px 0; line-height: 1.6; font-size: 14px; }
+.device-not-found strong { color: white; font-weight: 800; background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 3px; }
 
-.device-not-found i {
-  font-size: 40px;
-  color: #ef4444;
-  flex-shrink: 0;
-  animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.6;
-  }
-}
-
-.device-not-found h3 {
-  margin: 0 0 12px 0;
-  color: #fca5a5;
-  font-size: 20px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.device-not-found p {
-  margin: 6px 0;
-  line-height: 1.6;
-  font-size: 14px;
-}
-
-.device-not-found strong {
-  color: white;
-  font-weight: 800;
-  background: rgba(255, 255, 255, 0.1);
-  padding: 2px 6px;
-  border-radius: 3px;
-}
-
-.label {
-  color: var(--muted);
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
+.label { color: var(--muted); font-weight: 700; display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
 
 .input {
   width: 100%;
@@ -1440,16 +1209,9 @@ onBeforeUnmount(() => {
   outline: none;
   transition: border-color 0.2s ease;
 }
+.input:focus { border-color: var(--accent); }
 
-.input:focus {
-  border-color: var(--accent);
-}
-
-.load-wrap {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-}
+.load-wrap { display: flex; flex-direction: column; justify-content: flex-end; }
 
 .btn {
   padding: 8px 14px;
@@ -1468,18 +1230,9 @@ onBeforeUnmount(() => {
   background: #0f172a;
   color: var(--text);
 }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: #0f172a;
-  color: var(--text);
-  border-color: var(--accent);
-}
-
+.btn-primary { background: #0f172a; color: var(--text); border-color: var(--accent); }
 .btn-primary:hover:not(:disabled) {
   background: #0b1220;
   box-shadow: 0 0 14px rgba(96, 165, 250, 0.25);
@@ -1499,6 +1252,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+/* ============ GRID ============ */
 .main-grid {
   display: grid;
   grid-template-columns: repeat(24, 1fr);
@@ -1506,43 +1260,13 @@ onBeforeUnmount(() => {
   margin-bottom: 20px;
 }
 
-.thermometer-panel {
-  grid-column: span 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.chart-panel {
-  grid-column: span 18;
-}
-
-.gauge-panel {
-  grid-column: span 8;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.gauge-panel-humidity {
-  grid-column: span 4;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  
-}
-
-.chart-panel-wide {
-  grid-column: span 24;
-}
-
-.svg-panel {
-  grid-column: span 8;
-}
-
-.map-panel {
-  grid-column: span 24;
-}
+.thermometer-panel { grid-column: span 2; display: flex; flex-direction: column; align-items: center; }
+.chart-panel { grid-column: span 18; }
+.gauge-panel { grid-column: span 8; display: flex; flex-direction: column; align-items: center; }
+.gauge-panel-humidity { grid-column: span 4; display: flex; flex-direction: column; align-items: center; }
+.chart-panel-wide { grid-column: span 24; }
+.svg-panel { grid-column: span 8; }
+.map-panel { grid-column: span 24; }
 
 .chart-title {
   color: var(--text);
@@ -1556,78 +1280,16 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-/* Thermometer */
-.thermometer-container {
-  position: relative;
-  width: 60px;
-  height: 180px;
-  margin: 10px 0;
-}
+/* ============ THERMOMETER ============ */
+.thermometer-container { position: relative; width: 60px; height: 180px; margin: 10px 0; }
+.thermometer-scale { position: absolute; left: -40px; top: 0; height: 140px; display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; color: var(--muted); }
+.thermometer-tube { width: 18px; height: 140px; background: rgba(255,255,255,0.05); border: 2px solid var(--panel-border); border-radius: 10px; position: relative; overflow: hidden; margin: 0 auto; }
+.thermometer-fill { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(to top, #ef4444, #ff9b3d); transition: height 1s cubic-bezier(0.4,0,0.2,1); border-radius: 0 0 8px 8px; }
+.thermometer-bulb { width: 26px; height: 26px; background: radial-gradient(circle, #ef4444, #cc0000); border-radius: 50%; margin: 8px auto 0; border: 2px solid var(--panel-border); position: relative; }
+.thermometer-bulb::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 10px; height: 10px; background: rgba(255,255,255,0.3); border-radius: 50%; }
+.temp-display { font-size: 18px; font-weight: 700; color: #ff9b3d; margin-top: 10px; text-align: center; }
 
-.thermometer-scale {
-  position: absolute;
-  left: -40px;
-  top: 0;
-  height: 140px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  font-size: 10px;
-  color: var(--muted);
-}
-
-.thermometer-tube {
-  width: 18px;
-  height: 140px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 2px solid var(--panel-border);
-  border-radius: 10px;
-  position: relative;
-  overflow: hidden;
-  margin: 0 auto;
-}
-
-.thermometer-fill {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: linear-gradient(to top, #ef4444, #ff9b3d);
-  transition: height 1s cubic-bezier(0.4, 0, 0.2, 1);
-  border-radius: 0 0 8px 8px;
-}
-
-.thermometer-bulb {
-  width: 26px;
-  height: 26px;
-  background: radial-gradient(circle, #ef4444, #cc0000);
-  border-radius: 50%;
-  margin: 8px auto 0;
-  border: 2px solid var(--panel-border);
-  position: relative;
-}
-
-.thermometer-bulb::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 10px;
-  height: 10px;
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 50%;
-}
-
-.temp-display {
-  font-size: 18px;
-  font-weight: 700;
-  color: #ff9b3d;
-  margin-top: 10px;
-  text-align: center;
-}
-
-/* Charts */
+/* ============ CHARTS ============ */
 .chart-wrap {
   height: 360px;
   background: var(--panel-2);
@@ -1637,7 +1299,7 @@ onBeforeUnmount(() => {
   position: relative;
 }
 .chart-wrap-noise {
-  height: 460px;
+  height: 220px;
   background: var(--panel-2);
   border: 0.5px solid var(--panel-border);
   border-radius: 6px;
@@ -1645,359 +1307,88 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-.chart-point {
-  opacity: 0.5;
-  cursor: pointer;
-  transition: opacity 0.2s ease;
-}
+.chart-point { opacity: 0.5; cursor: pointer; transition: opacity 0.2s, r 0.15s; }
+.chart-point:hover { opacity: 1; }
 
-.chart-point:hover {
-  opacity: 1;
-}
-
-.noise-bar {
-  opacity: 0.85;
-  cursor: pointer;
-  transition: opacity 0.2s ease;
-}
-
-.noise-bar:hover {
-  opacity: 1;
-}
+.noise-bar { opacity: 0.85; cursor: pointer; transition: opacity 0.2s; }
+.noise-bar:hover { opacity: 1; }
 
 .tooltip {
   position: absolute;
   bottom: 12px;
   left: 12px;
-  background: rgba(10, 15, 20, 0.92);
+  background: rgba(10, 15, 20, 0.95);
   padding: 8px 12px;
   border-radius: 6px;
   font-weight: 800;
   border: 1px solid var(--panel-border);
   font-size: 14px;
   pointer-events: none;
+  z-index: 10;
 }
+.tooltip-sub { font-size: 10px; opacity: 0.8; margin-top: 4px; font-weight: 600; }
+.tooltip-temp { color: #ff9b3d; border-color: rgba(255,155,61,0.7); }
+.tooltip-hum { color: #3d9fff; border-color: rgba(61,159,255,0.7); }
+.tooltip-noise { color: #22c55e; border-color: rgba(34,197,94,0.7); }
 
-.tooltip-sub {
-  font-size: 10px;
-  opacity: 0.8;
-  margin-top: 4px;
-  font-weight: 600;
-}
-
-.tooltip-temp { 
-  color: #ff9b3d; 
-  border-color: rgba(255, 155, 61, 0.7); 
-}
-
-.tooltip-hum { 
-  color: #3d9fff; 
-  border-color: rgba(61, 159, 255, 0.7); 
-}
-
-.tooltip-noise { 
-  color: #22c55e; 
-  border-color: rgba(34, 197, 94, 0.7); 
-}
-
-.legend {
-  display: flex;
-  gap: 16px;
-  justify-content: center;
-  margin-top: 10px;
-  font-size: 11px;
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-}
-
-.legend-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
+.legend { display: flex; gap: 16px; justify-content: center; margin-top: 10px; font-size: 11px; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.legend-item.muted { color: #4b5563; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 .legend-dot.temp { background: #ff9b3d; }
 .legend-dot.hum { background: #3d9fff; }
+.legend-dot.noise { background: #22c55e; }
 
-/* Gauges */
-.gauge-container {
-  width: 160px;
-  height: 160px;
-  position: relative;
-  margin: 10px 0;
-}
+/* ============ GAUGES ============ */
+.gauge-container { width: 160px; height: 160px; position: relative; margin: 10px 0; }
+.gauge-svg { transform: rotate(-90deg); }
+.gauge-fill { transition: stroke-dashoffset 1s cubic-bezier(0.4,0,0.2,1), stroke 0.3s ease; }
+.gauge-value { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 32px; font-weight: 700; color: var(--text); }
 
-.gauge-svg {
-  transform: rotate(-90deg);
-}
+/* ============ TILT ============ */
+.svg-display { width: 100%; height: 200px; display: flex; align-items: center; justify-content: center; }
+.tilt-viz { width: 100%; max-width: 240px; height: 180px; position: relative; }
+.tilt-surface { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); width: 180px; height: 3px; background: repeating-linear-gradient(90deg, #4a5568, #4a5568 10px, transparent 10px, transparent 20px); }
+.tilt-device { position: absolute; bottom: 36px; left: 50%; width: 50px; height: 16px; background: #4d4d4d; border: 1px solid var(--panel-border); border-radius: 2px; transform-origin: center bottom; transition: transform 1s cubic-bezier(0.4,0,0.2,1); display: flex; align-items: center; justify-content: center; font-size: 9px; color: white; font-weight: 700; }
+.tilt-indicator { position: absolute; bottom: 52px; left: 50%; width: 2px; height: 80px; background: linear-gradient(to top, #ef4444, transparent); transform-origin: center bottom; transition: transform 1s cubic-bezier(0.4,0,0.2,1); }
+.tilt-label { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 16px; color: #ef4444; font-weight: 700; }
 
-.gauge-fill {
-  transition: stroke-dashoffset 1s cubic-bezier(0.4, 0, 0.2, 1), 
-              stroke 0.3s ease;
-}
+/* ============ DISTANCE ============ */
+.distance-viz { width: 100%; max-width: 260px; height: 180px; position: relative; }
+.s6000-box { position: absolute; top: 50%; transform: translateY(-50%); background: #4d4d4d; padding: 6px 14px; border-radius: 4px; font-size: 12px; color: white; font-weight: 700; transition: left 1s cubic-bezier(0.4,0,0.2,1); }
+.obstacle { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); width: 30px; height: 100px; background: repeating-linear-gradient(45deg, #4a5568, #4a5568 8px, #374151 8px, #374151 16px); border: 2px solid var(--panel-border); }
+.distance-line { position: absolute; top: 50%; height: 2px; background: rgba(239,68,68,0.4); border-top: 2px dashed #ef4444; transition: left 1s cubic-bezier(0.4,0,0.2,1), width 1s cubic-bezier(0.4,0,0.2,1); }
+.distance-label { position: absolute; top: 35%; left: 50%; transform: translateX(-50%); font-size: 14px; color: #ef4444; font-weight: 700; }
 
-.gauge-value {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--text);
-}
+/* ============ MAP ============ */
+.map-container { width: 100%; height: 400px; background: var(--panel-2); border-radius: 6px; border: 1px solid var(--panel-border); position: relative; overflow: hidden; }
+.leaflet-map { width: 100%; height: 100%; border-radius: 6px; }
+.map-coords { position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: var(--text); background: rgba(17,24,39,0.95); padding: 8px 12px; border-radius: 4px; font-weight: 700; backdrop-filter: blur(8px); border: 1px solid var(--panel-border); z-index: 1000; }
 
-/* Tilt Visualization */
-.svg-display {
-  width: 100%;
-  height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tilt-viz {
-  width: 100%;
-  max-width: 240px;
-  height: 180px;
-  position: relative;
-}
-
-.tilt-surface {
-  position: absolute;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 180px;
-  height: 3px;
-  background: repeating-linear-gradient(
-    90deg,
-    #4a5568,
-    #4a5568 10px,
-    transparent 10px,
-    transparent 20px
-  );
-}
-
-.tilt-device {
-  position: absolute;
-  bottom: 36px;
-  left: 50%;
-  width: 50px;
-  height: 16px;
-  background: #4d4d4d;
-  border: 1px solid var(--panel-border);
-  border-radius: 2px;
-  transform-origin: center bottom;
-  transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9px;
-  color: white;
-  font-weight: 700;
-}
-
-.tilt-indicator {
-  position: absolute;
-  bottom: 52px;
-  left: 50%;
-  width: 2px;
-  height: 80px;
-  background: linear-gradient(to top, #ef4444, transparent);
-  transform-origin: center bottom;
-  transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.tilt-label {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 16px;
-  color: #ef4444;
-  font-weight: 700;
-}
-
-/* Distance Visualization */
-.distance-viz {
-  width: 100%;
-  max-width: 260px;
-  height: 180px;
-  position: relative;
-}
-
-.s6000-box {
-  position: absolute;
-  left: 20px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: #4d4d4d;
-  padding: 6px 14px;
-  border-radius: 4px;
-  font-size: 12px;
-  color: white;
-  font-weight: 700;
-  transition: left 1s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.obstacle {
-  position: absolute;
-  right: 20px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 30px;
-  height: 100px;
-  background: repeating-linear-gradient(
-    45deg,
-    #4a5568,
-    #4a5568 8px,
-    #374151 8px,
-    #374151 16px
-  );
-  border: 2px solid var(--panel-border);
-}
-
-.distance-line {
-  position: absolute;
-  top: 50%;
-  height: 2px;
-  background: rgba(239, 68, 68, 0.4);
-  border-top: 2px dashed #ef4444;
-  transition: left 1s cubic-bezier(0.4, 0, 0.2, 1), 
-              width 1s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.distance-label {
-  position: absolute;
-  top: 35%;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 14px;
-  color: #ef4444;
-  font-weight: 700;
-}
-
-/* GPS Map with Leaflet */
-.map-container {
-  width: 100%;
-  height: 400px;
-  background: var(--panel-2);
-  border-radius: 6px;
-  border: 1px solid var(--panel-border);
-  position: relative;
-  overflow: hidden;
-}
-
-.leaflet-map {
-  width: 100%;
-  height: 100%;
-  border-radius: 6px;
-}
-
-.map-coords {
-  position: absolute;
-  bottom: 12px;
-  left: 12px;
-  font-size: 11px;
-  color: var(--text);
-  background: rgba(17, 24, 39, 0.95);
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-weight: 700;
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--panel-border);
-  z-index: 1000;
-}
-
-/* Statistics Footer */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 15px;
-}
-
-.stat {
-  padding: 14px;
-  border-radius: 6px;
-  color: var(--text);
-  background: var(--panel);
-  border: 1px solid var(--panel-border);
-  box-shadow: 0 8px 18px rgba(0,0,0,0.2);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.stat:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 24px rgba(0,0,0,0.3);
-}
-
+/* ============ STATS ============ */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; }
+.stat { padding: 14px; border-radius: 6px; color: var(--text); background: var(--panel); border: 1px solid var(--panel-border); box-shadow: 0 8px 18px rgba(0,0,0,0.2); transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.stat:hover { transform: translateY(-2px); box-shadow: 0 12px 24px rgba(0,0,0,0.3); }
 .stat-temp { border-left: 3px solid #ef4444; }
 .stat-hum { border-left: 3px solid #3b82f6; }
 .stat-pres { border-left: 3px solid #10b981; }
 .stat-count { border-left: 3px solid #8b5cf6; }
+.stat-label { font-size: 11px; opacity: 0.85; margin-bottom: 6px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; display: flex; align-items: center; gap: 6px; }
+.stat-value { font-size: 26px; font-weight: 900; margin-bottom: 6px; }
+.stat-sub { font-size: 11px; opacity: 0.75; }
 
-.stat-label { 
-  font-size: 11px; 
-  opacity: 0.85; 
-  margin-bottom: 6px; 
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.stat-value { 
-  font-size: 26px; 
-  font-weight: 900; 
-  margin-bottom: 6px; 
-}
-
-.stat-sub { 
-  font-size: 11px; 
-  opacity: 0.75; 
-}
-
-/* Responsive Design */
+/* ============ RESPONSIVE ============ */
 @media (max-width: 1400px) {
-  .chart-panel {
-    grid-column: span 24;
-  }
-  .thermometer-panel,
-  .gauge-panel {
-    grid-column: span 8;
-  }
+  .chart-panel { grid-column: span 24; }
+  .thermometer-panel, .gauge-panel { grid-column: span 8; }
 }
-
 @media (max-width: 768px) {
-  .main-grid > * {
-    grid-column: span 24 !important;
-  }
-  
-  .header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  
-  .header-right {
-    width: 100%;
-    justify-content: space-between;
-  }
+  .main-grid > * { grid-column: span 24 !important; }
+  .header { flex-direction: column; align-items: flex-start; }
+  .header-right { width: 100%; justify-content: space-between; }
 }
-
 @media (max-width: 480px) {
-  .controls-grid {
-    grid-template-columns: 1fr;
-  }
-  
-  .stats-grid {
-    grid-template-columns: 1fr;
-  }
+  .controls-grid { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: 1fr; }
 }
 </style>

@@ -80,7 +80,7 @@ _sensor_parser = SensorDataTool()
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CHAT_SYSTEM = """\
-You are the Smart Park AI assistant for the Della Silla Smart Park IoT platform.
+You are the Smart Park Admin AI assistant for the Della Silla Smart Park IoT platform.
 You embody SIX specialised analytical roles — work through them in order for every request:
 
 ROLE 1 — Sensor Data Analyst

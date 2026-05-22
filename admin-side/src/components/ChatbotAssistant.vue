@@ -209,7 +209,7 @@ async function sendText () {
     if (deviceContext.value.length)
       formData.append('device_data', JSON.stringify(deviceContext.value))
 
-    const response = await api.post('/api/rag/chat', formData)
+    const response = await api.post('/api/crew/chat', formData)
     pushMessage('assistant', response.answer || '(No response)')
   } catch (err) {
     console.error('Chat error:', err)
@@ -219,7 +219,7 @@ async function sendText () {
   }
 }
 
-// ── Audio hold-to-talk → /api/rag/chat with audio_file ───────────────────
+// ── Audio hold-to-talk → /api/crew/chat with audio_file ───────────────────
 async function onMicDown () {
   try {
     mediaStream   = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -259,7 +259,7 @@ async function sendAudio (audioBlob) {
     if (deviceContext.value.length)
       formData.append('device_data', JSON.stringify(deviceContext.value))
 
-    const response = await api.post('/api/rag/chat', formData)
+    const response = await api.post('/api/crew/chat', formData)
     pushMessage('assistant', response.answer || '(No response)', {
       transcript: response.transcript || '',
     })

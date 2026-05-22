@@ -6,6 +6,7 @@ import { useAdminAuthStore } from '@/auth/adminAuthStore'
 import SensorDashboardPage from './pages/SensorDashboardPage.vue'
 import GroupMembersPage    from './pages/GroupMembersPage.vue'
 import WeatherPage         from './pages/WeatherPage.vue'
+import VisitorPage           from './components/visitor/visitor.vue'
 import HelpPage            from './pages/HelpPage.vue'
 import DocsPage            from './pages/DocsPage.vue'
 import ChartPage           from './components/SideNavEffect/ChartPage.vue'
@@ -57,7 +58,7 @@ async function handleLogout() { await store.logout() }
       <nav class="navbar navbar-dark bg-dark border-bottom">
         <div class="container-fluid">
           <span class="navbar-brand mb-1 h4">
-            <i class="bi bi-cloud-sun-fill me-2"></i>IOT-Smart Park
+            <i class="bi bi-cloud-sun-fill me-2"></i>Giganti della Sila-Smart Park Admin
           </span>
 
           <div class="d-flex gap-2 align-items-center flex-wrap">
@@ -68,6 +69,10 @@ async function handleLogout() { await store.logout() }
             <button @click="navigateTo('weather')"
               :class="['btn btn-sm', currentPage==='weather' ? 'btn-primary' : 'btn-outline-light']">
               <i class="bi bi-cloud-sun me-1"></i>{{ $t('sidebar.weather_map') }}
+            </button>
+            <button @click="navigateTo('visitor')"
+              :class="['btn btn-sm', currentPage==='visitor' ? 'btn-primary' : 'btn-outline-light']">
+              <i class="bi bi-people me-1"></i>Visitor Density
             </button>
 
             <!-- RCMS dropdown group -->
@@ -117,6 +122,7 @@ async function handleLogout() { await store.logout() }
       <!-- Page content -->
       <SensorDashboardPage v-if="currentPage === 'dashboard'" />
       <WeatherPage         v-else-if="currentPage === 'weather'" />
+      <VisitorPage         v-else-if="currentPage === 'visitor'" />
       <GroupMembersPage    v-else-if="currentPage === 'members'" />
       <HelpPage            v-else-if="currentPage === 'help'" />
       <DocsPage            v-else-if="currentPage === 'docs'" />

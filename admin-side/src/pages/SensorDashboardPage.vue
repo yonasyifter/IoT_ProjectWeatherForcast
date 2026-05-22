@@ -38,49 +38,57 @@ async function loadLatest() {
       return
     }
 
-    // Group readings by device_id and get the latest reading for each device
+    // Group readings by device_id and get the latest reading and history for each device
     const deviceMap = new Map()
-    
+
     data.forEach(reading => {
-      const deviceId = reading.device_id || 'unknown'
-      const existingReading = deviceMap.get(deviceId)
-      
+      const deviceId = reading.device_id
+
       // Skip readings without a timestamp
       if (!reading.time) return
-      
+
+      if (!deviceMap.has(deviceId)) {
+        deviceMap.set(deviceId, {
+          latest: reading,
+          history: []
+        })
+      }
+
+      const deviceData = deviceMap.get(deviceId)
+      deviceData.history.push(reading)
+
       const currentTime = new Date(reading.time).getTime()
-      
-      // Keep the reading with the most recent timestamp
-      if (!existingReading) {
-        deviceMap.set(deviceId, reading)
-      } else {
-        const existingTime = new Date(existingReading.time).getTime()
-        if (currentTime > existingTime) {
-          deviceMap.set(deviceId, reading)
-        }
+      const latestTime = new Date(deviceData.latest.time).getTime()
+
+      if (currentTime > latestTime) {
+        deviceData.latest = reading
       }
     })
 
     // Convert map to array, transform data, and sort by device_id
-    devices.value = Array.from(deviceMap.values()).map(reading => ({
-      deviceId: reading.device_id || 'unknown',
-      temperature: reading.temperature ?? '—',
-      humidity: reading.humidity ?? '—',
-      pressure: reading.pressure ? (reading.pressure / 1000).toFixed(2) : '—',
-      light: reading.light ?? '—',
-      noise: reading.noise ?? '—',
-      tof: reading.tof ?? '—',
-      angle: reading.angle ?? '—',
-      weather_prediction: reading.weather_prediction ?? '—',
-      accX: reading.accX ?? '—',
-      accY: reading.accY ?? '—',
-      accZ: reading.accZ ?? '—',
-      vibrAccX: reading.vibrAccX ?? '—',
-      vibrAccY: reading.vibrAccY ?? '—',
-      vibrAccZ: reading.vibrAccZ ?? '—',
-      observedAt: reading.time ? new Date(reading.time).toLocaleString() : '—',
-      timestamp: reading.time
-    })).sort((a, b) => {
+    devices.value = Array.from(deviceMap.values()).map(item => {
+      const reading = item.latest
+      return {
+        deviceId: reading.device_id,
+        temperature: reading.temperature ?? '—',
+        humidity: reading.humidity ?? '—',
+        pressure: reading.pressure ? (reading.pressure / 1000).toFixed(2) : '—',
+        light: reading.light ?? '—',
+        noise: reading.noise ?? '—',
+        tof: reading.tof ?? '—',
+        angle: reading.angle ?? '—',
+        weather_prediction: reading.weather_prediction ?? '—',
+        accX: reading.accX ?? '—',
+        accY: reading.accY ?? '—',
+        accZ: reading.accZ ?? '—',
+        vibrAccX: reading.vibrAccX ?? '—',
+        vibrAccY: reading.vibrAccY ?? '—',
+        vibrAccZ: reading.vibrAccZ ?? '—',
+        observedAt: reading.time ? new Date(reading.time).toLocaleString() : '—',
+        timestamp: reading.time,
+        history: item.history.sort((a, b) => new Date(a.time) - new Date(b.time))
+      }
+    }).sort((a, b) => {
       const idA = String(a.deviceId || '')
       const idB = String(b.deviceId || '')
       return idA.localeCompare(idB)
@@ -328,7 +336,7 @@ onUnmounted(() => {
           :vibrAccX="device.vibrAccX"
           :vibrAccY="device.vibrAccY"
           :vibrAccZ="device.vibrAccZ"
-
+          :history="device.history"
           :device-id="device.deviceId"
           :observed-at="device.observedAt"
           :loading="loading"
@@ -527,6 +535,15 @@ onUnmounted(() => {
 
 .modal {
   display: block;
+}
+
+.modal-content {
+  animation: modalZoom 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modalZoom {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 .table-responsive::-webkit-scrollbar {

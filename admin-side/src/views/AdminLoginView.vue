@@ -54,6 +54,8 @@
 
         <p class="text-center register-link">
           <button class="link-btn" @click="view = 'reset'">Forgot password?</button>
+          <span class="mx-2 opacity-25">|</span>
+          <button class="link-btn" @click="view = 'register'">Create account</button>
         </p>
       </div>
 
@@ -97,6 +99,96 @@
         </p>
       </div>
 
+      <!-- ── REGISTER CARD ────────────────────── -->
+      <div v-else-if="view === 'register'" key="register" class="auth-card">
+        <div v-if="regSuccess" class="text-center">
+          <div class="logo-icon mx-auto mb-3" style="background: linear-gradient(135deg, #2f9e44, #1e7a34); border-radius: 50%;">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+          </div>
+          <h1 class="card-title mb-2">Account Created!</h1>
+          <p class="card-subtitle mb-4" style="text-transform:none;letter-spacing:0;font-size:0.95rem;color:rgba(255,255,255,0.6);">
+            Your park admin account is ready. You can now sign in.
+          </p>
+          <button class="btn-primary w-100" @click="view = 'login'">
+            Go to Login
+          </button>
+        </div>
+
+        <template v-else>
+          <div class="text-center mb-4">
+            <div class="logo-icon mx-auto mb-3">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z" stroke="white" stroke-width="1.5"/>
+                <path d="M12 2v20M3 7l9 5 9-5" stroke="white" stroke-width="1" opacity=".4"/>
+              </svg>
+            </div>
+            <h1 class="card-title">Create Account</h1>
+            <p class="card-subtitle">Register as a Park Administrator</p>
+          </div>
+
+          <div v-if="regError" class="alert-error mb-3">
+            <IconAlert />
+            {{ regError }}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Username</label>
+            <div class="input-wrapper">
+              <IconUser class="input-icon" />
+              <input v-model="regUsername" type="text" class="form-input"
+                placeholder="Choose a username" autocomplete="username" />
+            </div>
+            <p class="text-secondary small opacity-50" style="font-size: 0.7rem; margin-top: 4px;">Minimum 3 characters</p>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label">Password</label>
+            <div class="input-wrapper">
+              <IconLock class="input-icon" />
+              <input v-model="regPassword" :type="regShowPw ? 'text' : 'password'"
+                class="form-input" placeholder="Create a password"
+                autocomplete="new-password" />
+              <button class="toggle-pw" @click="regShowPw = !regShowPw" type="button">
+                <IconEye v-if="!regShowPw" /><IconEyeOff v-else />
+              </button>
+            </div>
+          </div>
+
+          <div v-if="regPassword" class="d-flex align-items-center gap-2 mb-3">
+            <div class="flex-grow-1" style="height:4px; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
+              <div :style="{ width: (getPasswordStrength(regPassword).level / 4 * 100) + '%', background: getPasswordStrength(regPassword).color }"
+                style="height:100%; transition: width 0.3s ease, background 0.3s ease;"></div>
+            </div>
+            <span class="small fw-bold" :style="{ color: getPasswordStrength(regPassword).color, fontSize: '0.7rem' }">
+              {{ getPasswordStrength(regPassword).label }}
+            </span>
+          </div>
+
+          <div class="mb-4">
+            <label class="form-label">Confirm Password</label>
+            <div class="input-wrapper">
+              <IconLock class="input-icon" />
+              <input v-model="regConfirmPassword" type="password" class="form-input"
+                :class="{ 'border-success': regConfirmPassword && regConfirmPassword === regPassword, 'border-danger': regConfirmPassword && regConfirmPassword !== regPassword }"
+                placeholder="Repeat your password" autocomplete="new-password"
+                @keyup.enter="handleRegister" />
+            </div>
+          </div>
+
+          <button class="btn-primary w-100 mb-3" @click="handleRegister" :disabled="regLoading">
+            <span v-if="regLoading" class="spinner me-2"></span>
+            {{ regLoading ? 'Creating account...' : 'Create Account' }}
+          </button>
+
+          <p class="text-center register-link">
+            Already have an account?
+            <button class="link-btn" @click="view = 'login'">Sign in</button>
+          </p>
+        </template>
+      </div>
+
     </Transition>
   </div>
 </template>
@@ -123,6 +215,15 @@ const resetLoading = ref(false)
 const resetError = ref('')
 const resetSuccess = ref(false)
 
+// Registration state
+const regUsername = ref('')
+const regPassword = ref('')
+const regConfirmPassword = ref('')
+const regLoading = ref(false)
+const regError = ref('')
+const regSuccess = ref(false)
+const regShowPw = ref(false)
+
 async function handleLogin() {
   error.value = ''
   if (!loginEmail.value || !loginPassword.value) {
@@ -147,6 +248,70 @@ async function handleLogin() {
     }
   } finally {
     loading.value = false
+  }
+}
+
+function getPasswordStrength(pw) {
+  if (!pw) return { level: 0, label: '', color: '' }
+  let score = 0
+  if (pw.length >= 8) score++
+  if (/[A-Z]/.test(pw)) score++
+  if (/[0-9]/.test(pw)) score++
+  if (/[^A-Za-z0-9]/.test(pw)) score++
+  const levels = [
+    { level: 0, label: '', color: '' },
+    { level: 1, label: 'Weak', color: '#ff6b6b' },
+    { level: 2, label: 'Fair', color: '#ffa94d' },
+    { level: 3, label: 'Good', color: '#69db7c' },
+    { level: 4, label: 'Strong', color: '#51cf66' },
+  ]
+  return levels[score] || levels[0]
+}
+
+async function handleRegister() {
+  regError.value = ''
+  if (!regUsername.value.trim()) {
+    regError.value = 'Username is required.'
+    return
+  }
+  if (regUsername.value.trim().length < 3) {
+    regError.value = 'Username must be at least 3 characters.'
+    return
+  }
+  if (!regPassword.value) {
+    regError.value = 'Password is required.'
+    return
+  }
+  if (regPassword.value.length < 6) {
+    regError.value = 'Password must be at least 6 characters.'
+    return
+  }
+  if (regPassword.value !== regConfirmPassword.value) {
+    regError.value = 'Passwords do not match.'
+    return
+  }
+
+  regLoading.value = true
+  try {
+    const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+    const res = await fetch(`${API_BASE}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: regUsername.value.trim(),
+        password: regPassword.value
+      })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      regError.value = data.detail || 'Registration failed. Please try again.'
+      return
+    }
+    regSuccess.value = true
+  } catch (e) {
+    regError.value = 'Could not connect to the server. Is the backend running?'
+  } finally {
+    regLoading.value = false
   }
 }
 

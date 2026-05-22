@@ -83,19 +83,17 @@ class ProviderConfig:
 PROVIDERS: list[ProviderConfig] = [
     # ── 1. AWS Bedrock (Claude Sonnet) ──────────────────────────────────────
     ProviderConfig(
-        name="AWS Bedrock (Claude Sonnet)",
-        model="bedrock/anthropic.claude-sonnet-4-5",
-        api_key_env="AWS_BEDROCK",
-        aws_aki=_BEDROCK_AKI,
-        aws_secret=_BEDROCK_SECRET,
-        aws_region=_BEDROCK_REGION,
+        name="Groq (llama-3.3-70b)",
+        model="groq/llama-3.3-70b-versatile",
+        api_key_env="GROQ_API_KEY2",
+        default_key="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",
     ),
     # ── 2. Groq (fast free-tier) ─────────────────────────────────────────────
     ProviderConfig(
         name="Groq (llama-3.3-70b)",
         model="groq/llama-3.3-70b-versatile",
         api_key_env="GROQ_API_KEY",
-        default_key="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",
+        default_key="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",
     ),
     # ── 3. OpenRouter (optional) ─────────────────────────────────────────────
     ProviderConfig(

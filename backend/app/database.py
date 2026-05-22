@@ -23,8 +23,43 @@ def init_firebase():
         except Exception as e:
             print(f"(DATABASE) Error parsing FIREBASE_CREDENTIALS JSON: {e}")
 
+    # Try initializing from individual environment variables
+    project_id = os.getenv("FIREBASE_PROJECT_ID")
+    private_key = os.getenv("FIREBASE_PRIVATE_KEY")
+    client_email = os.getenv("FIREBASE_CLIENT_EMAIL")
+
+    if project_id and private_key and client_email:
+        try:
+            print("(DATABASE) Initializing Firebase from individual environment variables.")
+            # Ensure private key has correct newline characters
+            if private_key.startswith('"') and private_key.endswith('"'):
+                private_key = private_key[1:-1]
+            private_key = private_key.replace('\\n', '\n')
+
+            cred_dict = {
+                "type": "service_account",
+                "project_id": project_id,
+                "private_key": private_key,
+                "client_email": client_email,
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+            # Add optional fields if present
+            pk_id = os.getenv("FIREBASE_PRIVATE_KEY_ID")
+            if pk_id:
+                cred_dict["private_key_id"] = pk_id
+            client_id = os.getenv("FIREBASE_CLIENT_ID")
+            if client_id:
+                cred_dict["client_id"] = client_id
+
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            return
+        except Exception as e:
+            print(f"(DATABASE) Error initializing Firebase from environment variables: {e}")
+
     # Fallback to file path (Local development mode)
     cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
+
     if cred_path:
         cred_path = cred_path.strip('"').strip("'")
         if not os.path.exists(cred_path):

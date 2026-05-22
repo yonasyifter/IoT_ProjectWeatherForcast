@@ -6,7 +6,7 @@ import { rcmsApi } from '../services/rcmsApi.js'
 const loading  = ref(false)
 const error    = ref('')
 const devices  = ref([])
-const models   = ref([])
+const models   = ref(['EG5120'])
 const groups   = ref([])
 const pageNum  = ref(1)
 const pageSize = ref(20)
@@ -35,11 +35,7 @@ async function loadDevices() {
 
 async function loadMeta() {
   try {
-    const [m, g] = await Promise.all([
-      rcmsApi.getModels().catch(() => []),
-      rcmsApi.getGroups().catch(() => []),
-    ])
-    models.value = Array.isArray(m) ? m : (m?.list || [])
+    const g = await rcmsApi.getGroups().catch(() => [])
     groups.value = Array.isArray(g) ? g : (g?.list || [])
   } catch(e) {}
 }
@@ -221,7 +217,7 @@ onMounted(async () => { await Promise.all([loadDevices(), loadMeta()]) })
               <label class="form-label text-secondary small">Model</label>
               <select v-model="newDevice.deviceModel" class="form-select bg-dark border-secondary text-white">
                 <option value="">Select model...</option>
-                <option v-for="m in models" :key="m.modelId||m.id" :value="m.modelName||m.name">{{ m.modelName||m.name }}</option>
+                <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
               </select>
             </div>
             <div class="mb-3">

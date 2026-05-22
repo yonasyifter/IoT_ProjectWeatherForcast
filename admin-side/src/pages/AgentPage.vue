@@ -183,200 +183,205 @@
       <!-- ── RIGHT: OUTPUT PANEL ───────────────────────── -->
       <div class="ap-output-panel">
 
-        <!-- Empty state -->
-        <div v-if="!loading && !response && !reportContent" class="ap-empty-state">
-          <div class="ap-empty-orb"></div>
-          <p class="ap-empty-title">Ready to analyse</p>
-          <p class="ap-empty-sub">Select a capability and ask a question.<br>The AI crew will query live sensor data, RCMS device health,<br>and InfluxDB history to answer.</p>
-          <div class="ap-empty-chips">
-            <span v-for="tag in ['InfluxDB', 'RCMS EG5120', 'Firebase', 'LaTeX math', 'Chart JSON']" :key="tag" class="ap-tag">{{ tag }}</span>
-          </div>
-        </div>
+        <Transition name="ap-fade-slide" mode="out-in">
 
-        <!-- Loading skeleton -->
-        <div v-if="loading" class="ap-loading-state">
-          <div class="ap-loading-icon">
-            <div class="ap-pulse-ring"></div>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" fill="#60a5fa"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round"/></svg>
-          </div>
-          <p class="ap-loading-phase">{{ loadingPhase }}</p>
-          <div class="ap-loading-steps">
-            <div v-for="(step, i) in loadingSteps" :key="step" :class="['ap-loading-step', { done: i < loadingStep, active: i === loadingStep }]">
-              <span class="ap-step-dot"></span>
-              <span>{{ step }}</span>
+          <!-- 1. Loading state — checked FIRST -->
+          <div v-if="loading" key="loading" class="ap-loading-state">
+            <div class="ap-loading-icon">
+              <div class="ap-pulse-ring"></div>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" fill="#60a5fa"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </div>
+            <p class="ap-loading-phase">{{ loadingPhase }}</p>
+            <div class="ap-loading-steps">
+              <TransitionGroup name="ap-step-fade">
+                <div v-for="(step, i) in loadingSteps" :key="step" :class="['ap-loading-step', { done: i < loadingStep, active: i === loadingStep }]">
+                  <span class="ap-step-dot"></span>
+                  <span class="ap-step-text">{{ step }}</span>
+                </div>
+              </TransitionGroup>
             </div>
           </div>
-        </div>
 
-        <!-- ── CHAT RESPONSE ───────────────── -->
-        <div v-if="!loading && response && activeMode !== 'report'" class="ap-response">
-
-          <!-- Source citation bar -->
-          <div class="ap-source-bar">
-            <span v-for="src in responseSources" :key="src" class="ap-source-chip">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" stroke-width="2"/></svg>
-              {{ src }}
-            </span>
+          <!-- 2. Empty state -->
+          <div v-else-if="!response && !reportContent" key="empty" class="ap-empty-state">
+            <div class="ap-empty-orb"></div>
+            <p class="ap-empty-title">Ready to analyse</p>
+            <p class="ap-empty-sub">Select a capability and ask a question.<br>The AI crew will query live sensor data, RCMS device health,<br>and InfluxDB history to answer.</p>
+            <div class="ap-empty-chips">
+              <span v-for="tag in ['InfluxDB', 'RCMS EG5120', 'Firebase', 'LaTeX math', 'Chart JSON']" :key="tag" class="ap-tag">{{ tag }}</span>
+            </div>
           </div>
 
-          <!-- Chart response -->
-          <div v-if="chartData" class="ap-chart-section">
-            <div class="ap-chart-header">
-              <span class="ap-chart-type-badge">{{ chartData.chart_type }}</span>
-              <h3 class="ap-chart-title">{{ chartData.title }}</h3>
-            </div>
-            <div class="ap-chart-wrap">
-              <canvas ref="chartCanvas" :key="chartKey"></canvas>
-            </div>
-            <p v-if="chartData.description" class="ap-chart-desc">{{ chartData.description }}</p>
-          </div>
+          <!-- 3. Chat response -->
+          <div v-else-if="response && activeMode !== 'report'" key="response" class="ap-response">
 
-          <!-- Text / LaTeX response -->
-          <div v-if="response.answer" class="ap-answer-block">
-            <!-- LaTeX formulas detected -->
-            <div v-if="hasLatex" class="ap-latex-notice">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-              Mathematical expressions rendered below
+            <!-- Source citation bar -->
+            <div class="ap-source-bar">
+              <span v-for="src in responseSources" :key="src" class="ap-source-chip">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" stroke-width="2"/></svg>
+                {{ src }}
+              </span>
             </div>
 
-            <!-- Render paragraphs, LaTeX blocks, and inline math -->
-            <div class="ap-answer-content" v-html="renderedAnswer"></div>
+            <!-- Chart response -->
+            <div v-if="chartData" class="ap-chart-section">
+              <div class="ap-chart-header">
+                <span class="ap-chart-type-badge">{{ chartData.chart_type }}</span>
+                <h3 class="ap-chart-title">{{ chartData.title }}</h3>
+              </div>
+              <div class="ap-chart-wrap">
+                <canvas ref="chartCanvas" :key="chartKey"></canvas>
+              </div>
+              <p v-if="chartData.description" class="ap-chart-desc">{{ chartData.description }}</p>
+            </div>
 
-            <!-- Weather prediction callout -->
-            <div v-if="response.weather_prediction" class="ap-weather-callout">
-              <div class="ap-weather-icon">{{ weatherIcon(response.weather_prediction) }}</div>
-              <div>
-                <div class="ap-weather-label">Weather Forecast</div>
-                <div class="ap-weather-val">{{ response.weather_prediction }}</div>
-                <div v-if="response.prediction_confidence" class="ap-weather-conf">
-                  Confidence: {{ Math.round(response.prediction_confidence) }}%
-                  <div class="ap-conf-bar">
-                    <div class="ap-conf-fill" :style="{ width: response.prediction_confidence + '%' }"></div>
+            <!-- Text / LaTeX response -->
+            <div v-if="response.answer" class="ap-answer-block">
+              <!-- LaTeX formulas detected -->
+              <div v-if="hasLatex" class="ap-latex-notice">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                Mathematical expressions rendered below
+              </div>
+
+              <!-- Render paragraphs, LaTeX blocks, and inline math -->
+              <div class="ap-answer-content" v-html="renderedAnswer"></div>
+
+              <!-- Weather prediction callout -->
+              <div v-if="response.weather_prediction" class="ap-weather-callout">
+                <div class="ap-weather-icon">{{ weatherIcon(response.weather_prediction) }}</div>
+                <div>
+                  <div class="ap-weather-label">Weather Forecast</div>
+                  <div class="ap-weather-val">{{ response.weather_prediction }}</div>
+                  <div v-if="response.prediction_confidence" class="ap-weather-conf">
+                    Confidence: {{ Math.round(response.prediction_confidence) }}%
+                    <div class="ap-conf-bar">
+                      <div class="ap-conf-fill" :style="{ width: response.prediction_confidence + '%' }"></div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Transcript -->
-          <details v-if="response.transcript" class="ap-transcript-details">
-            <summary>🎙 Voice transcript</summary>
-            <pre>{{ response.transcript }}</pre>
-          </details>
+            <!-- Transcript -->
+            <details v-if="response.transcript" class="ap-transcript-details">
+              <summary>🎙 Voice transcript</summary>
+              <pre>{{ response.transcript }}</pre>
+            </details>
 
-          <!-- ── REPORT PROMPT ─────────────── -->
-          <div v-if="!reportDismissed && !reportContent" class="ap-report-prompt">
-            <div class="ap-report-prompt-left">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#60a5fa" stroke-width="1.8"/><polyline points="14,2 14,8 20,8" stroke="#60a5fa" stroke-width="1.8"/><line x1="16" y1="13" x2="8" y2="13" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round"/><line x1="16" y1="17" x2="8" y2="17" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round"/><polyline points="10,9 9,9 8,9" stroke="#60a5fa" stroke-width="1.8"/></svg>
-              <div>
-                <p class="ap-report-prompt-title">Generate a full analysis report?</p>
-                <p class="ap-report-prompt-sub">Device inventory · Statistical analysis with LaTeX · Anomaly findings · Recommendations · Delivery via email or WhatsApp</p>
+            <!-- ── REPORT PROMPT ─────────────── -->
+            <div v-if="!reportDismissed && !reportContent" class="ap-report-prompt">
+              <div class="ap-report-prompt-left">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#60a5fa" stroke-width="1.8"/><polyline points="14,2 14,8 20,8" stroke="#60a5fa" stroke-width="1.8"/><line x1="16" y1="13" x2="8" y2="13" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round"/><line x1="16" y1="17" x2="8" y2="17" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round"/><polyline points="10,9 9,9 8,9" stroke="#60a5fa" stroke-width="1.8"/></svg>
+                <div>
+                  <p class="ap-report-prompt-title">Generate a full analysis report?</p>
+                  <p class="ap-report-prompt-sub">Device inventory · Statistical analysis with LaTeX · Anomaly findings · Recommendations · Delivery via email or WhatsApp</p>
+                </div>
               </div>
-            </div>
-            <div class="ap-report-prompt-actions">
-              <button class="ap-btn-primary" @click="generateReport" :disabled="reportLoading">
-                <span v-if="reportLoading" class="ap-spinner sm"></span>
-                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2"/><polyline points="14,2 14,8 20,8" stroke="currentColor" stroke-width="2"/></svg>
-                {{ reportLoading ? 'Generating…' : 'Generate report' }}
-              </button>
-              <button class="ap-btn-ghost" @click="reportDismissed = true">No thanks</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── REPORT OUTPUT ───────────────── -->
-        <div v-if="!loading && reportContent" class="ap-report-output">
-          <div class="ap-report-header">
-            <div class="ap-report-header-left">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2"/><polyline points="14,2 14,8 20,8" stroke="currentColor" stroke-width="2"/></svg>
-              <span>Smart Park Analysis Report</span>
-            </div>
-            <div class="ap-report-actions">
-              <button class="ap-action-btn" @click="downloadPDF" :disabled="downloadingPDF" title="Download PDF">
-                <span v-if="downloadingPDF" class="ap-spinner sm"></span>
-                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                PDF
-              </button>
-              <button class="ap-action-btn" @click="downloadWord" :disabled="downloadingWord" title="Download Word">
-                <span v-if="downloadingWord" class="ap-spinner sm"></span>
-                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                Word
-              </button>
-              <button class="ap-action-btn danger" @click="clearReport" title="Close report">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-              </button>
-            </div>
-          </div>
-
-          <!-- Report body -->
-          <div class="ap-report-body" v-html="renderedReport"></div>
-
-          <!-- Delivery prompt block -->
-          <div v-if="showDeliveryPrompt" class="ap-delivery-section">
-            <div class="ap-delivery-header">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" stroke-width="2"/><polyline points="22,6 12,13 2,6" stroke="currentColor" stroke-width="2"/></svg>
-              Send this report
-            </div>
-
-            <div v-if="!deliveryChoice" class="ap-delivery-options">
-              <button class="ap-delivery-btn email" @click="deliveryChoice = 'email'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" stroke-width="2"/><polyline points="22,6 12,13 2,6" stroke="currentColor" stroke-width="2"/></svg>
-                📧 Email
-              </button>
-              <button class="ap-delivery-btn whatsapp" @click="deliveryChoice = 'whatsapp'">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" stroke="currentColor" stroke-width="2"/></svg>
-                💬 WhatsApp
-              </button>
-              <button class="ap-delivery-btn skip" @click="showDeliveryPrompt = false">
-                ❌ No thanks
-              </button>
-            </div>
-
-            <!-- Email form -->
-            <div v-if="deliveryChoice === 'email'" class="ap-delivery-form">
-              <label class="ap-label">Email address</label>
-              <div class="ap-delivery-input-row">
-                <input
-                  v-model="deliveryEmail"
-                  type="email"
-                  class="ap-input"
-                  placeholder="admin@smartpark.it"
-                  @keyup.enter="sendDelivery"
-                />
-                <button class="ap-btn-primary sm" @click="sendDelivery" :disabled="deliverySending">
-                  <span v-if="deliverySending" class="ap-spinner sm"></span>
-                  <span v-else>Send</span>
+              <div class="ap-report-prompt-actions">
+                <button class="ap-btn-primary" @click="generateReport" :disabled="reportLoading">
+                  <span v-if="reportLoading" class="ap-spinner sm"></span>
+                  <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2"/><polyline points="14,2 14,8 20,8" stroke="currentColor" stroke-width="2"/></svg>
+                  {{ reportLoading ? reportLoadingPhase : 'Generate report' }}
                 </button>
-                <button class="ap-btn-ghost sm" @click="deliveryChoice = null">Back</button>
+                <button class="ap-btn-ghost" @click="reportDismissed = true">No thanks</button>
               </div>
-            </div>
-
-            <!-- WhatsApp form -->
-            <div v-if="deliveryChoice === 'whatsapp'" class="ap-delivery-form">
-              <label class="ap-label">Phone number (international format)</label>
-              <div class="ap-delivery-input-row">
-                <input
-                  v-model="deliveryPhone"
-                  type="tel"
-                  class="ap-input"
-                  placeholder="+39 333 1234567"
-                  @keyup.enter="sendDelivery"
-                />
-                <button class="ap-btn-primary sm" @click="sendDelivery" :disabled="deliverySending">
-                  <span v-if="deliverySending" class="ap-spinner sm"></span>
-                  <span v-else>Send</span>
-                </button>
-                <button class="ap-btn-ghost sm" @click="deliveryChoice = null">Back</button>
-              </div>
-            </div>
-
-            <!-- Delivery result -->
-            <div v-if="deliveryResult" :class="['ap-delivery-result', deliveryResult.type]">
-              {{ deliveryResult.message }}
             </div>
           </div>
-        </div>
 
+          <!-- 4. Report output -->
+          <div v-else-if="reportContent" key="report" class="ap-report-output">
+            <div class="ap-report-header">
+              <div class="ap-report-header-left">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2"/><polyline points="14,2 14,8 20,8" stroke="currentColor" stroke-width="2"/></svg>
+                <span>Smart Park Analysis Report</span>
+              </div>
+              <div class="ap-report-actions">
+                <button class="ap-action-btn" @click="downloadPDF" :disabled="downloadingPDF" title="Download PDF">
+                  <span v-if="downloadingPDF" class="ap-spinner sm"></span>
+                  <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  PDF
+                </button>
+                <button class="ap-action-btn" @click="downloadWord" :disabled="downloadingWord" title="Download Word">
+                  <span v-if="downloadingWord" class="ap-spinner sm"></span>
+                  <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  Word
+                </button>
+                <button class="ap-action-btn danger" @click="clearReport" title="Close report">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Report body -->
+            <div class="ap-report-body" v-html="renderedReport"></div>
+
+            <!-- Delivery prompt block -->
+            <div v-if="showDeliveryPrompt" class="ap-delivery-section">
+              <div class="ap-delivery-header">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" stroke-width="2"/><polyline points="22,6 12,13 2,6" stroke="currentColor" stroke-width="2"/></svg>
+                Send this report
+              </div>
+
+              <div v-if="!deliveryChoice" class="ap-delivery-options">
+                <button class="ap-delivery-btn email" @click="deliveryChoice = 'email'">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" stroke-width="2"/><polyline points="22,6 12,13 2,6" stroke="currentColor" stroke-width="2"/></svg>
+                  📧 Email
+                </button>
+                <button class="ap-delivery-btn whatsapp" @click="deliveryChoice = 'whatsapp'">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" stroke="currentColor" stroke-width="2"/></svg>
+                  💬 WhatsApp
+                </button>
+                <button class="ap-delivery-btn skip" @click="showDeliveryPrompt = false">
+                  ❌ No thanks
+                </button>
+              </div>
+
+              <!-- Email form -->
+              <div v-if="deliveryChoice === 'email'" class="ap-delivery-form">
+                <label class="ap-label">Email address</label>
+                <div class="ap-delivery-input-row">
+                  <input
+                    v-model="deliveryEmail"
+                    type="email"
+                    class="ap-input"
+                    placeholder="admin@smartpark.it"
+                    @keyup.enter="sendDelivery"
+                  />
+                  <button class="ap-btn-primary sm" @click="sendDelivery" :disabled="deliverySending">
+                    <span v-if="deliverySending" class="ap-spinner sm"></span>
+                    <span v-else>Send</span>
+                  </button>
+                  <button class="ap-btn-ghost sm" @click="deliveryChoice = null">Back</button>
+                </div>
+              </div>
+
+              <!-- WhatsApp form -->
+              <div v-if="deliveryChoice === 'whatsapp'" class="ap-delivery-form">
+                <label class="ap-label">Phone number (international format)</label>
+                <div class="ap-delivery-input-row">
+                  <input
+                    v-model="deliveryPhone"
+                    type="tel"
+                    class="ap-input"
+                    placeholder="+39 333 1234567"
+                    @keyup.enter="sendDelivery"
+                  />
+                  <button class="ap-btn-primary sm" @click="sendDelivery" :disabled="deliverySending">
+                    <span v-if="deliverySending" class="ap-spinner sm"></span>
+                    <span v-else>Send</span>
+                  </button>
+                  <button class="ap-btn-ghost sm" @click="deliveryChoice = null">Back</button>
+                </div>
+              </div>
+
+              <!-- Delivery result -->
+              <div v-if="deliveryResult" :class="['ap-delivery-result', deliveryResult.type]">
+                {{ deliveryResult.message }}
+              </div>
+            </div>
+          </div>
+
+        </Transition>
       </div>
     </div>
 
@@ -572,6 +577,15 @@ const loadingStep   = ref(0)
 const loadingPhase  = ref('')
 let phaseTimer      = null
 
+const reportLoadingSteps = [
+  'Analyzing agent-led insights...',
+  'Structuring final report...',
+  'Compiling statistical summaries...',
+  'Formatting LaTeX expressions...',
+  'Finalizing document layout...',
+]
+const reportLoadingStep = ref(0)
+
 function startLoadingAnimation () {
   loadingStep.value  = 0
   loadingPhase.value = loadingSteps[0]
@@ -587,6 +601,23 @@ function stopLoadingAnimation () {
   clearInterval(phaseTimer)
   loadingStep.value  = 0
   loadingPhase.value = ''
+}
+
+function startReportLoadingAnimation () {
+  reportLoadingStep.value = 0
+  reportLoadingPhase.value = reportLoadingSteps[0]
+  phaseTimer = setInterval(() => {
+    if (reportLoadingStep.value < reportLoadingSteps.length - 1) {
+      reportLoadingStep.value++
+      reportLoadingPhase.value = reportLoadingSteps[reportLoadingStep.value]
+    }
+  }, 1800)
+}
+
+function stopReportLoadingAnimation () {
+  clearInterval(phaseTimer)
+  reportLoadingStep.value = 0
+  reportLoadingPhase.value = ''
 }
 
 // ── Status ────────────────────────────────────────────────────────────────
@@ -607,11 +638,12 @@ const chartCanvas    = ref(null)
 const chartKey       = ref(0)
 let   chartInstance  = null
 
-const reportContent   = ref('')
-const reportLoading   = ref(false)
-const reportDismissed = ref(false)
-const downloadingPDF  = ref(false)
-const downloadingWord = ref(false)
+const reportContent      = ref('')
+const reportLoading      = ref(false)
+const reportLoadingPhase = ref('')
+const reportDismissed    = ref(false)
+const downloadingPDF     = ref(false)
+const downloadingWord    = ref(false)
 
 const showDeliveryPrompt = ref(false)
 const deliveryChoice     = ref(null)
@@ -655,15 +687,12 @@ function buildFinalQuery (raw) {
   let q = raw.trim()
   if (!q && transcript.value) q = transcript.value
 
-  // Append time window hint if user selected one
   if (timeWindow.value && !q.toLowerCase().includes('hour') && !q.toLowerCase().includes('day')) {
     q += ` (time window: ${timeWindow.value})`
   }
-  // Request math if toggle on
   if (requestMath.value && !q.toLowerCase().includes('formula') && !q.toLowerCase().includes('latex')) {
     q += ' — please show the mathematical formula in LaTeX.'
   }
-  // Request chart if toggle on
   if (requestChart.value && activeMode.value !== 'chart') {
     q += ' — please show this as a chart.'
   }
@@ -683,11 +712,11 @@ async function handleSubmit () {
   const q = buildFinalQuery(userQuery.value)
   if (!q) { error.value = 'Please enter a query or use voice input.'; return }
 
-  loading.value       = true
-  crewStatus.value    = 'loading'
-  error.value         = ''
-  response.value      = null
-  chartData.value     = null
+  loading.value         = true
+  crewStatus.value      = 'loading'
+  error.value           = ''
+  response.value        = null
+  chartData.value       = null
   reportDismissed.value = false
   destroyChart()
   startLoadingAnimation()
@@ -702,16 +731,13 @@ async function handleSubmit () {
     if (snapshot.length) fd.append('device_data', JSON.stringify(snapshot))
 
     if (activeMode.value === 'report') {
-      // Full report path
       const res = await api.post('/api/crew/report', fd)
       reportContent.value      = res.report || ''
       showDeliveryPrompt.value = reportContent.value.includes('delivery_prompt')
       crewStatus.value         = 'ok'
     } else {
-      // Chat path
       const res = await api.post('/api/crew/chat', fd)
       response.value = res
-      // Extract chart if present
       if (res.chart?.chart_type) {
         chartData.value = res.chart
       }
@@ -760,6 +786,7 @@ async function generateReport () {
   const q = buildFinalQuery(userQuery.value) || 'Generate a full Smart Park analysis report.'
   reportLoading.value = true
   error.value         = ''
+  startReportLoadingAnimation()
 
   try {
     const snapshot = await fetchSensorSnapshot()
@@ -775,6 +802,7 @@ async function generateReport () {
     error.value = 'Report generation failed: ' + (e.message || 'Unknown error')
   } finally {
     reportLoading.value = false
+    stopReportLoadingAnimation()
   }
 }
 
@@ -791,7 +819,6 @@ async function sendDelivery () {
   if (!contact.trim()) { deliveryResult.value = { type: 'error', message: 'Please enter a valid contact.' }; return }
 
   deliverySending.value = true
-  // Simulate — real implementation would POST to a backend delivery endpoint
   await new Promise(r => setTimeout(r, 1400))
   deliverySending.value = false
   deliveryResult.value  = {
@@ -812,17 +839,19 @@ const parsedInsights = computed(() => {
   return parseAgentResponse(response.value.answer)
 })
 
-function renderTextWithCitations(text) {
+function renderTextWithCitations (text) {
   if (!text) return ''
   let t = escapeHtml(text)
-  // Bold **text**
   t = t.replace(/\*\*(.+?)\*\*/g, '<strong style="color:#fff">$1</strong>')
-  // Source citations (Source: X)
   t = t.replace(/\(Source:\s*([^)]+)\)/g, '<span class="ap-inline-source">⟨$1⟩</span>')
-  // Line breaks
   t = t.replace(/\n\n/g, '</p><p class="ap-p">').replace(/\n/g, '<br>')
   return `<p class="ap-p">${t}</p>`
 }
+
+const renderedAnswer = computed(() => {
+  if (!response.value?.answer) return ''
+  return renderTextWithCitations(response.value.answer)
+})
 
 const hasLatex = computed(() => {
   const a = response.value?.answer || ''
@@ -839,7 +868,6 @@ const renderedReport = computed(() => {
   if (!reportContent.value) return ''
   let html = reportContent.value
 
-  // Strip delivery_prompt fenced block — we render it separately
   html = html.replace(/```delivery_prompt[\s\S]*?```/g, '')
 
   html = html
@@ -1330,39 +1358,7 @@ function weatherIcon (pred) {
   gap: 24px;
   animation: fade-in-up 0.6s ease-out;
 }
-
-.ap-response-header {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: rgba(255,255,255,0.03);
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-}
-
 .ap-source-bar { display: flex; flex-wrap: wrap; gap: 6px; }
-
-.ap-insight-feed {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.ap-text-content {
-  font-size: 0.9rem;
-  line-height: 1.7;
-  color: var(--text-secondary);
-}
-
-.ap-gap-content {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 0.85rem;
-  color: #fca5a5;
-  font-style: italic;
-}
 
 /* Enhanced Chart Visuals */
 .ap-chart-section {
@@ -1424,53 +1420,6 @@ function weatherIcon (pred) {
 }
 .ap-answer-content { font-size: 0.875rem; line-height: 1.7; color: var(--text-primary); }
 
-/* Shared style injected via v-html — must NOT be scoped */
-</style>
-
-<style>
-/* ── Global (v-html rendered content) ────────────────────── */
-.ap-p { margin: 0 0 10px; }
-.ap-p:last-child { margin-bottom: 0; }
-.ap-latex-block {
-  margin: 12px 0; padding: 12px 16px;
-  background: #0c1625; border: 1px solid rgba(139,92,246,0.3);
-  border-radius: 8px; overflow-x: auto;
-}
-.ap-latex-code {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.85rem; color: #c4b5fd; white-space: pre;
-}
-.ap-latex-inline {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.82rem; color: #a5b4fc;
-  background: rgba(139,92,246,0.12); padding: 1px 6px; border-radius: 4px;
-}
-.ap-inline-source {
-  font-size: 0.68rem; color: #4a6180;
-  font-family: 'JetBrains Mono', monospace; margin-left: 4px;
-}
-
-/* Report */
-.rh1 { font-size: 1.3rem; font-weight: 700; color: #e2ecf8; margin: 24px 0 10px; border-bottom: 1px solid rgba(99,133,169,0.2); padding-bottom: 6px; }
-.rh2 { font-size: 1.05rem; font-weight: 600; color: #93c5fd; margin: 20px 0 8px; border-bottom: 1px solid rgba(99,133,169,0.12); padding-bottom: 4px; }
-.rh3 { font-size: 0.92rem; font-weight: 600; color: #60a5fa; margin: 14px 0 6px; }
-.rh4 { font-size: 0.85rem; font-weight: 600; color: #7aa8d8; margin: 10px 0 4px; }
-.rp  { margin: 0 0 8px; font-size: 0.875rem; line-height: 1.7; color: #cbd5e1; }
-.ap-ul { padding-left: 20px; margin: 6px 0; }
-.ap-ul li { font-size: 0.875rem; margin-bottom: 4px; color: #cbd5e1; }
-.rag { font-size: 1em; }
-
-.ap-table-wrap { overflow-x: auto; margin: 12px 0; }
-.ap-report-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-.ap-report-table th { background: rgba(59,130,246,0.2); color: #93c5fd; font-weight: 600; padding: 8px 12px; text-align: left; border-bottom: 1px solid rgba(99,133,169,0.25); }
-.ap-report-table td { padding: 7px 12px; border-bottom: 1px solid rgba(99,133,169,0.1); color: #cbd5e1; }
-.ap-report-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
-.ap-code { background: #0c1625; border: 1px solid rgba(99,133,169,0.2); border-radius: 6px; padding: 10px 14px; font-size: 0.78rem; font-family: 'JetBrains Mono', monospace; color: #94a3b8; overflow-x: auto; white-space: pre; margin: 8px 0; }
-.ap-chart-json-block { padding: 8px 12px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); border-radius: 6px; font-size: 0.78rem; color: #60a5fa; margin: 6px 0; }
-.ap-report-inner { color: #cbd5e1; }
-</style>
-
-<style scoped>
 /* ── Weather callout ──────────────────────────────────────── */
 .ap-weather-callout {
   display: flex; align-items: flex-start; gap: 14px;
@@ -1512,6 +1461,7 @@ function weatherIcon (pred) {
 .ap-report-output {
   background: var(--bg1); border: 1px solid var(--border);
   border-radius: var(--radius); overflow: hidden;
+  animation: report-slide-in 0.6s cubic-bezier(0.23, 1, 0.32, 1) forwards;
 }
 .ap-report-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -1595,17 +1545,49 @@ function weatherIcon (pred) {
 .ap-btn-ghost.sm { padding: 6px 10px; font-size: 0.75rem; }
 .ap-btn-ghost:hover { border-color: var(--border-hi); color: var(--text-primary); }
 
-/* Spinner */
-.ap-spinner {
-  width: 14px; height: 14px;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-  display: inline-block;
+/* ── Transitions ────────────────────────────────────────────── */
+.ap-fade-slide-enter-active, .ap-fade-slide-leave-active {
+  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
-.ap-spinner.sm { width: 12px; height: 12px; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.ap-fade-slide-enter-from, .ap-fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.ap-step-fade-enter-active, .ap-step-fade-leave-active {
+  transition: all 0.3s ease;
+}
+.ap-step-fade-enter-from, .ap-step-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-10px);
+}
+
+.ap-answer-content {
+  animation: text-reveal 0.8s ease-out forwards;
+}
+@keyframes text-reveal {
+  from { opacity: 0; filter: blur(4px); transform: translateY(5px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@keyframes report-slide-in {
+  from { opacity: 0; transform: scale(0.95) translateY(20px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.ap-loading-step.active .ap-step-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+  animation: pulse-dot 0.6s infinite;
+}
+.ap-step-text {
+  transition: color 0.3s, transform 0.3s;
+}
+.ap-loading-step.active .ap-step-text {
+  transform: translateX(4px);
+  color: var(--accent);
+}
 
 /* ── History bar ──────────────────────────────────────────── */
 .ap-history-bar {
@@ -1650,4 +1632,47 @@ function weatherIcon (pred) {
   .ap-report-prompt { flex-direction: column; }
   .ap-delivery-input-row { flex-direction: column; }
 }
+</style>
+
+<style>
+/* ── Global (v-html rendered content) ────────────────────── */
+.ap-p { margin: 0 0 10px; }
+.ap-p:last-child { margin-bottom: 0; }
+.ap-latex-block {
+  margin: 12px 0; padding: 12px 16px;
+  background: #0c1625; border: 1px solid rgba(139,92,246,0.3);
+  border-radius: 8px; overflow-x: auto;
+}
+.ap-latex-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem; color: #c4b5fd; white-space: pre;
+}
+.ap-latex-inline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem; color: #a5b4fc;
+  background: rgba(139,92,246,0.12); padding: 1px 6px; border-radius: 4px;
+}
+.ap-inline-source {
+  font-size: 0.68rem; color: #4a6180;
+  font-family: 'JetBrains Mono', monospace; margin-left: 4px;
+}
+
+/* Report */
+.rh1 { font-size: 1.3rem; font-weight: 700; color: #e2ecf8; margin: 24px 0 10px; border-bottom: 1px solid rgba(99,133,169,0.2); padding-bottom: 6px; }
+.rh2 { font-size: 1.05rem; font-weight: 600; color: #93c5fd; margin: 20px 0 8px; border-bottom: 1px solid rgba(99,133,169,0.12); padding-bottom: 4px; }
+.rh3 { font-size: 0.92rem; font-weight: 600; color: #60a5fa; margin: 14px 0 6px; }
+.rh4 { font-size: 0.85rem; font-weight: 600; color: #7aa8d8; margin: 10px 0 4px; }
+.rp  { margin: 0 0 8px; font-size: 0.875rem; line-height: 1.7; color: #cbd5e1; }
+.ap-ul { padding-left: 20px; margin: 6px 0; }
+.ap-ul li { font-size: 0.875rem; margin-bottom: 4px; color: #cbd5e1; }
+.rag { font-size: 1em; }
+
+.ap-table-wrap { overflow-x: auto; margin: 12px 0; }
+.ap-report-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.ap-report-table th { background: rgba(59,130,246,0.2); color: #93c5fd; font-weight: 600; padding: 8px 12px; text-align: left; border-bottom: 1px solid rgba(99,133,169,0.25); }
+.ap-report-table td { padding: 7px 12px; border-bottom: 1px solid rgba(99,133,169,0.1); color: #cbd5e1; }
+.ap-report-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+.ap-code { background: #0c1625; border: 1px solid rgba(99,133,169,0.2); border-radius: 6px; padding: 10px 14px; font-size: 0.78rem; font-family: 'JetBrains Mono', monospace; color: #94a3b8; overflow-x: auto; white-space: pre; margin: 8px 0; }
+.ap-chart-json-block { padding: 8px 12px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); border-radius: 6px; font-size: 0.78rem; color: #60a5fa; margin: 6px 0; }
+.ap-report-inner { color: #cbd5e1; }
 </style>

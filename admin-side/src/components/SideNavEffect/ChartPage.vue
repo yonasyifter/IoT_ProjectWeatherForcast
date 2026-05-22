@@ -727,7 +727,7 @@ onBeforeUnmount(() => {
           <h3 class="chart-title"><i class="bi bi-thermometer-half"></i> Temperature Over Time</h3>
           <button class="btn-expand" @click="toggleFullscreen('temp')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
         </div>
-        <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan">
+        <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan" @click="toggleFullscreen('temp')">
           <svg :viewBox="`0 0 ${svgWidth} ${svgHeight}`">
             <g v-for="label in tempYLabels" :key="`ty-${label.y}`">
               <text :x="PADDING.left - 10" :y="label.y + 5" text-anchor="end" fill="#a0aec0" font-size="11">{{ label.value.toFixed(1) }}°C</text>
@@ -799,7 +799,7 @@ onBeforeUnmount(() => {
           <h3 class="chart-title"><i class="bi bi-speedometer2"></i> Pressure Over Time</h3>
           <button class="btn-expand" @click="toggleFullscreen('pres')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
         </div>
-        <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan">
+        <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan" @click="toggleFullscreen('pres')">
           <svg :viewBox="`0 0 ${svgWidth} ${svgHeight}`">
             <g v-for="label in presYLabels" :key="`py-${label.y}`">
               <text :x="PADDING.left - 10" :y="label.y + 5" text-anchor="end" fill="#a0aec0" font-size="11">{{ (label.value / 1000).toFixed(2) }} kPa</text>
@@ -835,7 +835,7 @@ onBeforeUnmount(() => {
           <h3 class="chart-title"><i class="bi bi-soundwave"></i> Noise Over Time</h3>
           <button class="btn-expand" @click="toggleFullscreen('noise')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
         </div>
-        <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan">
+        <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan" @click="toggleFullscreen('noise')">
           <svg :viewBox="`0 0 ${svgWidth} ${svgHeight}`">
             <g v-for="label in noiseYLabels" :key="`ny-${label.y}`">
               <text :x="PADDING.left - 10" :y="label.y + 5" text-anchor="end" fill="#a0aec0" font-size="11">{{ label.value.toFixed(1) }} dB</text>
