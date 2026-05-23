@@ -146,14 +146,16 @@ FALLBACK RULE (all roles):
 _REPORT_SYSTEM = """\
 You are the Smart Park Report Composer for the Della Silla Smart Park IoT platform.
 Produce a complete, professional Markdown analysis report using the data provided.
+The report is read by administrators and exported to PDF/Word, so it must be clean,
+coordinated, and free of raw machine payloads.
 
 Report must include ALL sections:
-  1.  Header (title, generated datetime, query, language, overall RAG status 🟢/🟡/🔴)
-  2.  Executive Summary (2–3 sentences, RAG emoji, top anomaly)
+  1.  Header (title, generated datetime, query, language, overall status: GREEN/YELLOW/RED)
+  2.  Executive Summary (2-3 sentences, status label, top anomaly)
   3.  Device Inventory table (Device ID | Model | Firmware | Status | Uptime | Last Seen)
   4.  Current Environmental Conditions table (all metrics with SI units)
-  5.  Statistical Analysis (LaTeX formulas for mean/min/max/Δ-diff/rate-of-change
-      + chart JSON blocks for visualisations)
+  5.  Statistical Analysis (LaTeX formulas for mean/min/max/delta/rate-of-change,
+      followed by a compact metric summary table)
   6.  Weather Assessment (prediction + confidence verbal phrase + trend)
   7.  User Density & Occupancy Estimate (from TOF/noise; or state "Insufficient data")
   8.  System Health table (CPU | RAM | Storage | Network with OK/WARN/CRIT status)
@@ -163,22 +165,26 @@ Report must include ALL sections:
   12. Delivery Prompt (fenced block at the very end):
 
 ```delivery_prompt
-📬 Would you like to send this report?
+Would you like to send this report?
 
-[1] 📧 Email     — reply with your email address
-[2] 💬 WhatsApp  — reply with your phone number (e.g. +39 333 1234567)
-[3] ❌ No thanks
+[1] Email     - reply with your email address
+[2] WhatsApp  - reply with your phone number (e.g. +39 333 1234567)
+[3] No thanks
 
 Reply with 1, 2, or 3.
 ```
 
 Rules:
-• All values must carry SI units (°C, %, hPa, dB, lux, cm, g).
-• LaTeX for every formula: inline $...$ or block $$ ... $$.
-• Chart JSON blocks inside fenced ```json ... ``` with an H3 heading.
-  The frontend renders them — do not describe them in prose.
+• Use valid Markdown only: headings, paragraphs, numbered lists, and Markdown tables.
+• Do not output chart JSON, raw JSON, code fences except the final delivery_prompt block,
+  truncated arrays, logs, debug text, or internal reasoning.
+• Do not use emoji or decorative symbols. Use ASCII-safe status labels:
+  GREEN, YELLOW, RED, OK, WARN, CRIT, INFO.
+• All values must carry SI units (deg C, %, hPa, dB, lux, cm, g).
+• LaTeX for formulas only: inline $...$ or block $$ ... $$.
 • Respond exclusively in the requested language.
-• Never fabricate data. Unavailable fields → "N/A".
+• Never fabricate data. Unavailable fields -> "N/A".
+• Keep each section concise and coordinated. Prefer one clear table over long prose.
 • If any section relies on general knowledge (not park data), prefix that
   section content with: "I don't have official data for this, but …"
 • Data Sources table must list every source used and whether general
@@ -399,8 +405,10 @@ def _build_messages(
             "REPORT INSTRUCTIONS",
             "════════════════════════════════════════════════",
             "Generate the FULL Markdown report following the structure in your system prompt.",
-            "Include chart JSON blocks for: temperature trend, humidity trend,",
-            "per-device comparison bar chart, and any other visualisation the data supports.",
+            "Do not include chart JSON blocks, raw JSON, debug data, or code fences",
+            "except the final delivery_prompt block.",
+            "Use compact Markdown tables for trends and per-device comparisons.",
+            "Use ASCII-safe status labels instead of emojis.",
             "Append the delivery_prompt fenced block at the very end.",
             f"Use report_datetime: {now_utc}",
             f"InfluxDB bucket: {INFLUXDB_BUCKET or 'N/A'}",
@@ -456,4 +464,37 @@ def run_crew_report(
         context_data=context_data,
         mode="report",
     )
-    return call_llm(messages, timeout=90)
+    return _sanitize_report(call_llm(messages, timeout=90))
+
+
+def _sanitize_report(markdown: str) -> str:
+    """Remove common LLM/report artifacts before the UI renders or exports."""
+    text = str(markdown or "").strip()
+
+    # Keep the delivery prompt, but remove all raw chart/data JSON code fences.
+    delivery_blocks: list[str] = []
+
+    def stash_delivery(match):
+        delivery_blocks.append(match.group(0))
+        return f"__DELIVERY_PROMPT_{len(delivery_blocks) - 1}__"
+
+    text = _re.sub(r"```delivery_prompt[\s\S]*?```", stash_delivery, text)
+    text = _re.sub(r"```json[\s\S]*?```", "", text, flags=_re.I)
+
+    # Remove mojibake that usually comes from emoji status markers in exports.
+    replacements = {
+        "Ø=ßá": "GREEN",
+        "Ø=ß yellow": "YELLOW",
+        "Ø=Ý´": "WARNING",
+        "Ø=Ô´": "CRITICAL",
+    }
+    for bad, good in replacements.items():
+        text = text.replace(bad, good)
+
+    # Normalize oversized whitespace left behind by stripped blocks.
+    text = _re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    for i, block in enumerate(delivery_blocks):
+        text = text.replace(f"__DELIVERY_PROMPT_{i}__", block)
+
+    return text

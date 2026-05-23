@@ -9,7 +9,7 @@ class WeatherPoint(BaseModel):
     humidity: Optional[float] = None
     pressure: Optional[float] = None
     light: Optional[float] = None
-    noise: Optional[str] = None
+    noise: Optional[float] = None
     tof: Optional[float] = None
     angle: Optional[float] = None
     accX: Optional[float] = None

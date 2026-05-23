@@ -312,8 +312,40 @@
               </div>
             </div>
 
-            <!-- Report body -->
-            <div class="ap-report-body" v-html="renderedReport"></div>
+            <div ref="reportExportRef" class="ap-report-export">
+              <!-- Report visual charts -->
+              <div v-if="reportCharts.length" class="ap-report-visuals">
+                <div class="ap-report-hero">
+                  <div>
+                    <div class="ap-report-kicker">Live Visual Appendix</div>
+                    <h2>Environmental Intelligence Snapshot</h2>
+                    <p>Charts are generated from the same sensor snapshot used for the report, then embedded into PDF and Word exports.</p>
+                  </div>
+                  <div class="ap-report-stat-strip">
+                    <div v-for="stat in reportStats" :key="stat.label" class="ap-report-stat">
+                      <span>{{ stat.label }}</span>
+                      <strong>{{ stat.value }}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ap-report-chart-grid">
+                  <section v-for="(chart, index) in reportCharts" :key="chart.id" class="ap-report-chart-card">
+                    <div class="ap-report-chart-head">
+                      <span class="ap-report-chart-type">{{ chart.type }}</span>
+                      <h3>{{ chart.title }}</h3>
+                    </div>
+                    <div class="ap-report-chart-wrap">
+                      <canvas :ref="el => assignReportChartCanvas(el, index)" :aria-label="chart.title"></canvas>
+                    </div>
+                    <p>{{ chart.description }}</p>
+                  </section>
+                </div>
+              </div>
+
+              <!-- Report body -->
+              <div class="ap-report-body" v-html="renderedReport"></div>
+            </div>
 
             <!-- Delivery prompt block -->
             <div v-if="showDeliveryPrompt" class="ap-delivery-section">
@@ -563,7 +595,10 @@ function stopRecording () {
   isRecording.value = false
 }
 
-onBeforeUnmount(() => { mediaStream?.getTracks().forEach(t => t.stop()) })
+onBeforeUnmount(() => {
+  mediaStream?.getTracks().forEach(t => t.stop())
+  destroyReportCharts()
+})
 
 // ── Loading phases ────────────────────────────────────────────────────────
 const loadingSteps = [
@@ -637,6 +672,9 @@ const chartData      = ref(null)
 const chartCanvas    = ref(null)
 const chartKey       = ref(0)
 let   chartInstance  = null
+const CHAT_REQUEST_TIMEOUT_MS = 55000
+const REPORT_REQUEST_TIMEOUT_MS = 130000
+const SNAPSHOT_REQUEST_TIMEOUT_MS = 10000
 
 const reportContent      = ref('')
 const reportLoading      = ref(false)
@@ -644,6 +682,11 @@ const reportLoadingPhase = ref('')
 const reportDismissed    = ref(false)
 const downloadingPDF     = ref(false)
 const downloadingWord    = ref(false)
+const reportSnapshot     = ref([])
+const reportCharts       = ref([])
+const reportExportRef    = ref(null)
+const reportChartCanvases = ref([])
+let   reportChartInstances = []
 
 const showDeliveryPrompt = ref(false)
 const deliveryChoice     = ref(null)
@@ -670,6 +713,30 @@ function pushHistory (query, mode) {
 
 function replayHistory (h) {
   userQuery.value = h.query
+}
+
+async function requestWithTimeout (requestFn, timeoutMs, timeoutMessage) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await requestFn(controller.signal)
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      throw new Error(timeoutMessage)
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function postWithTimeout (endpoint, body, timeoutMs = CHAT_REQUEST_TIMEOUT_MS) {
+  return requestWithTimeout(
+    signal => api.post(endpoint, body, { signal }),
+    timeoutMs,
+    'The AI assistant took too long to respond. Please retry with a shorter prompt.'
+  )
 }
 
 // ── Submit label ──────────────────────────────────────────────────────────
@@ -700,9 +767,23 @@ function buildFinalQuery (raw) {
 }
 
 // ── Sensor context snapshot ───────────────────────────────────────────────
-async function fetchSensorSnapshot () {
+function minutesForReportWindow () {
+  const q = (userQuery.value || '').toLowerCase()
+  const selected = timeWindow.value
+  const value = selected || (q.includes('week') ? '7d' : q.includes('24') || q.includes('day') ? '24h' : '24h')
+  const match = value.match(/^(\d+)([hd])$/)
+  if (!match) return 24 * 60
+  const amount = Number(match[1])
+  return match[2] === 'd' ? amount * 24 * 60 : amount * 60
+}
+
+async function fetchSensorSnapshot (minutes = 60) {
   try {
-    const data = await api.get('/api/weather/forecast/?minutes=60')
+    const data = await requestWithTimeout(
+      signal => api.get(`/api/weather/forecast/?minutes=${minutes}`, { signal }),
+      SNAPSHOT_REQUEST_TIMEOUT_MS,
+      'Sensor snapshot timed out.'
+    )
     return Array.isArray(data) ? data : []
   } catch { return [] }
 }
@@ -724,19 +805,24 @@ async function handleSubmit () {
   pushHistory(q, activeMode.value)
 
   try {
-    const snapshot = await fetchSensorSnapshot()
+    const snapshot = await fetchSensorSnapshot(activeMode.value === 'report' ? minutesForReportWindow() : 60)
     const fd = new FormData()
     fd.append('user_query', q)
     fd.append('language', lang.value)
     if (snapshot.length) fd.append('device_data', JSON.stringify(snapshot))
 
     if (activeMode.value === 'report') {
-      const res = await api.post('/api/crew/report', fd)
+      const res = await postWithTimeout('/api/crew/report', fd, REPORT_REQUEST_TIMEOUT_MS)
       reportContent.value      = res.report || ''
+      reportSnapshot.value     = snapshot
+      reportCharts.value       = buildReportCharts(reportSnapshot.value)
       showDeliveryPrompt.value = reportContent.value.includes('delivery_prompt')
       crewStatus.value         = 'ok'
+      await nextTick()
+      renderReportCharts()
     } else {
-      const res = await api.post('/api/crew/chat', fd)
+      clearReportState()
+      const res = await postWithTimeout('/api/crew/chat', fd)
       response.value = res
       if (res.chart?.chart_type) {
         chartData.value = res.chart
@@ -757,16 +843,17 @@ async function handleAudioSubmit (blob) {
   loading.value    = true
   crewStatus.value = 'loading'
   error.value      = ''
+  clearReportState()
   startLoadingAnimation()
 
   try {
-    const snapshot = await fetchSensorSnapshot()
+    const snapshot = await fetchSensorSnapshot(minutesForReportWindow())
     const fd = new FormData()
     fd.append('audio_file', blob, 'recording.webm')
     fd.append('language', lang.value)
     if (snapshot.length) fd.append('device_data', JSON.stringify(snapshot))
 
-    const res = await api.post('/api/crew/chat', fd)
+    const res = await postWithTimeout('/api/crew/chat', fd)
     transcript.value = res.transcript || ''
     response.value   = res
     if (res.chart?.chart_type) chartData.value = res.chart
@@ -795,9 +882,13 @@ async function generateReport () {
     fd.append('language', lang.value)
     if (snapshot.length) fd.append('device_data', JSON.stringify(snapshot))
 
-    const res = await api.post('/api/crew/report', fd)
+    const res = await postWithTimeout('/api/crew/report', fd, REPORT_REQUEST_TIMEOUT_MS)
     reportContent.value      = res.report || ''
+    reportSnapshot.value     = snapshot
+    reportCharts.value       = buildReportCharts(snapshot)
     showDeliveryPrompt.value = true
+    await nextTick()
+    renderReportCharts()
   } catch (e) {
     error.value = 'Report generation failed: ' + (e.message || 'Unknown error')
   } finally {
@@ -807,10 +898,17 @@ async function generateReport () {
 }
 
 function clearReport () {
+  clearReportState()
+}
+
+function clearReportState () {
   reportContent.value      = ''
+  reportSnapshot.value     = []
+  reportCharts.value       = []
   showDeliveryPrompt.value = false
   deliveryChoice.value     = null
   deliveryResult.value     = null
+  destroyReportCharts()
 }
 
 // ── Delivery (email / WhatsApp) ───────────────────────────────────────────
@@ -895,9 +993,10 @@ const renderedReport = computed(() => {
     .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
     .replace(/```json\n([\s\S]*?)```/g, '<div class="ap-chart-json-block">📊 Chart data embedded</div>')
     .replace(/```[\w]*\n([\s\S]*?)```/g, '<pre class="ap-code">$1</pre>')
-    .replace(/\n\n/g, '</p><p class="rp">').replace(/\n/g, '<br>')
+    .replace(/\n{2,}/g, '<br><br>')
+    .replace(/\n/g, '<br>')
 
-  return `<div class="ap-report-inner"><p class="rp">${html}</p></div>`
+  return `<div class="ap-report-inner">${html}</div>`
 })
 
 // ── Chart rendering ───────────────────────────────────────────────────────
@@ -975,47 +1074,324 @@ async function renderChart (data) {
 
 watch(chartData, async val => { if (val) await renderChart(val) })
 
+// ── Report chart rendering ────────────────────────────────────────────────
+function toNumber (value) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function formatReportNumber (value, unit = '') {
+  const n = toNumber(value)
+  if (n === null) return 'N/A'
+  return `${n.toFixed(1)}${unit}`
+}
+
+function latestReadingsByDevice (rows) {
+  const byDevice = new Map()
+  rows.forEach(row => {
+    if (!row?.device_id || !row?.time) return
+    const current = byDevice.get(row.device_id)
+    if (!current || new Date(row.time).getTime() > new Date(current.time).getTime()) {
+      byDevice.set(row.device_id, row)
+    }
+  })
+  return [...byDevice.values()].sort((a, b) => String(a.device_id).localeCompare(String(b.device_id)))
+}
+
+function trendRows (rows, limit = 24) {
+  return rows
+    .filter(row => row?.time && (toNumber(row.temperature) !== null || toNumber(row.humidity) !== null))
+    .sort((a, b) => new Date(a.time) - new Date(b.time))
+    .slice(-limit)
+}
+
+function hasValues (values, minCount = 1) {
+  return values.filter(value => toNumber(value) !== null).length >= minCount
+}
+
+function buildReportCharts (rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return []
+
+  const latest = latestReadingsByDevice(rows)
+  const trend = trendRows(rows)
+  const labels = latest.map(row => `Device ${row.device_id}`)
+  const trendLabels = trend.map(row => {
+    const date = new Date(row.time)
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  })
+
+  const charts = []
+
+  const tempTrend = trend.map(row => toNumber(row.temperature))
+  const humidityTrend = trend.map(row => toNumber(row.humidity))
+
+  if (trend.length && (hasValues(tempTrend, 2) || hasValues(humidityTrend, 2))) {
+    charts.push({
+      id: 'temp-humidity-trend',
+      type: 'line',
+      title: 'Temperature and Humidity Trend',
+      description: 'Recent environmental movement across the selected report window.',
+      data: {
+        labels: trendLabels,
+        datasets: [
+          {
+            label: 'Temperature (deg C)',
+            data: tempTrend,
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.14)',
+            tension: 0.35,
+            yAxisID: 'y'
+          },
+          {
+            label: 'Humidity (%)',
+            data: humidityTrend,
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56, 189, 248, 0.14)',
+            tension: 0.35,
+            yAxisID: 'y1'
+          }
+        ]
+      }
+    })
+  }
+
+  if (latest.length) {
+    const comparisonDatasets = [
+      { label: 'Temperature (deg C)', data: latest.map(row => toNumber(row.temperature)), backgroundColor: 'rgba(239, 68, 68, 0.78)' },
+      { label: 'Humidity (%)', data: latest.map(row => toNumber(row.humidity)), backgroundColor: 'rgba(37, 99, 235, 0.78)' },
+      { label: 'Noise (dB)', data: latest.map(row => toNumber(row.noise)), backgroundColor: 'rgba(245, 158, 11, 0.78)' }
+    ].filter(dataset => hasValues(dataset.data))
+
+    if (comparisonDatasets.length) {
+      charts.push({
+      id: 'device-comparison',
+      type: 'bar',
+      title: 'Per-Device Environmental Comparison',
+      description: 'Latest temperature, humidity, and noise readings by device.',
+      data: {
+        labels,
+        datasets: comparisonDatasets
+      }
+      })
+    }
+
+    const humidityShare = latest.map(row => toNumber(row.humidity) ?? 0)
+    if (humidityShare.some(value => value > 0)) {
+      charts.push({
+      id: 'humidity-share',
+      type: 'doughnut',
+      title: 'Humidity Distribution by Device',
+      description: 'Relative share of the latest humidity readings.',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Humidity (%)',
+          data: humidityShare,
+          backgroundColor: ['#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#ea580c', '#0f766e'],
+          borderColor: '#ffffff',
+          borderWidth: 2
+        }]
+      }
+      })
+    }
+
+    const scatterPoints = rows
+      .map(row => ({ x: toNumber(row.temperature), y: toNumber(row.humidity) }))
+      .filter(point => point.x !== null && point.y !== null)
+      .slice(-80)
+
+    if (scatterPoints.length >= 2) {
+      charts.push({
+        id: 'temperature-humidity-scatter',
+        type: 'scatter',
+        title: 'Temperature vs Humidity Correlation',
+        description: 'Scatter plot showing how humidity changes with temperature.',
+        data: {
+          datasets: [{
+            label: 'Sensor samples',
+            data: scatterPoints,
+            backgroundColor: 'rgba(34, 197, 94, 0.78)',
+            borderColor: '#22c55e'
+          }]
+        }
+      })
+    }
+  }
+
+  return charts
+}
+
+const reportStats = computed(() => {
+  const latest = latestReadingsByDevice(reportSnapshot.value)
+  const values = metric => latest.map(row => toNumber(row[metric])).filter(v => v !== null)
+  const avg = metric => {
+    const metricValues = values(metric)
+    return metricValues.length ? metricValues.reduce((sum, v) => sum + v, 0) / metricValues.length : null
+  }
+  return [
+    { label: 'Devices', value: String(latest.length || 'N/A') },
+    { label: 'Avg Temp', value: formatReportNumber(avg('temperature'), ' deg C') },
+    { label: 'Avg Humidity', value: formatReportNumber(avg('humidity'), '%') },
+    { label: 'Avg Noise', value: formatReportNumber(avg('noise'), ' dB') }
+  ]
+})
+
+function assignReportChartCanvas (el, index) {
+  if (el) reportChartCanvases.value[index] = el
+}
+
+function destroyReportCharts () {
+  reportChartInstances.forEach(instance => instance?.destroy())
+  reportChartInstances = []
+  reportChartCanvases.value = []
+}
+
+function reportChartOptions (chart) {
+  const common = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+      legend: {
+        position: 'bottom',
+        labels: { color: '#1f2937', font: { family: 'Times New Roman', size: 12 }, boxWidth: 12 }
+      },
+      tooltip: {
+        backgroundColor: '#ffffff',
+        titleColor: '#111827',
+        bodyColor: '#111827',
+        borderColor: '#cbd5e1',
+        borderWidth: 1
+      }
+    }
+  }
+
+  if (chart.type === 'doughnut') {
+    return { ...common, cutout: '62%' }
+  }
+
+  if (chart.type === 'scatter') {
+    return {
+      ...common,
+      scales: {
+        x: { title: { display: true, text: 'Temperature (deg C)', color: '#1d4ed8', font: { family: 'Times New Roman' } }, grid: { color: '#e2e8f0' }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } },
+        y: { title: { display: true, text: 'Humidity (%)', color: '#1d4ed8', font: { family: 'Times New Roman' } }, grid: { color: '#e2e8f0' }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } }
+      }
+    }
+  }
+
+  return {
+    ...common,
+    scales: {
+      x: { grid: { display: false }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } },
+      y: { grid: { color: '#e2e8f0' }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } },
+      ...(chart.id === 'temp-humidity-trend' ? {
+        y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#1d4ed8', font: { family: 'Times New Roman' } } }
+      } : {})
+    }
+  }
+}
+
+async function renderReportCharts () {
+  destroyReportCharts()
+  await nextTick()
+  reportCharts.value.forEach((chart, index) => {
+    const canvas = reportChartCanvases.value[index]
+    if (!canvas) return
+    reportChartInstances[index] = new Chart(canvas.getContext('2d'), {
+      type: chart.type,
+      data: chart.data,
+      options: reportChartOptions(chart)
+    })
+  })
+}
+
+function reportChartImagesHtml () {
+  return reportCharts.value.map((chart, index) => {
+    const canvas = reportChartCanvases.value[index]
+    const src = canvas?.toDataURL('image/png', 1)
+    if (!src) return ''
+    return `
+      <section class="chart-card">
+        <h3>${escapeHtml(chart.title)}</h3>
+        <img src="${src}" alt="${escapeHtml(chart.title)}" />
+        <p>${escapeHtml(chart.description)}</p>
+      </section>
+    `
+  }).join('')
+}
+
 // ── PDF download ──────────────────────────────────────────────────────────
 async function downloadPDF () {
   downloadingPDF.value = true
   try {
     const { jsPDF } = await import('jspdf')
+    const html2canvas = (await import('html2canvas')).default
+    const source = reportExportRef.value
+    if (!source) throw new Error('Report is not ready for export.')
+
+    const originalMaxHeight = source.style.maxHeight
+    const originalOverflow = source.style.overflow
+    source.style.maxHeight = 'none'
+    source.style.overflow = 'visible'
+    await nextTick()
+
+    const canvas = await html2canvas(source, {
+      backgroundColor: '#ffffff',
+      scale: 2,
+      useCORS: true,
+      logging: false
+    })
+
+    source.style.maxHeight = originalMaxHeight
+    source.style.overflow = originalOverflow
+
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-    const plain = reportContent.value
-      .replace(/#{1,4} /g, '').replace(/\*\*(.+?)\*\*/g, '$1')
-      .replace(/\*(.+?)\*/g, '$1').replace(/\|/g, '  ')
-      .replace(/[-]{3,}/g, '').replace(/```[\s\S]*?```/g, '[CODE BLOCK]')
-      .split('\n').filter(l => l.trim())
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const margin = 8
+    const imgWidth = pageWidth - margin * 2
+    const imgHeight = (canvas.height * imgWidth) / canvas.width
+    const pageCanvasHeight = (canvas.width * (pageHeight - margin * 2)) / imgWidth
+    let renderedHeight = 0
+    let page = 0
 
-    doc.setFont('helvetica','bold'); doc.setFontSize(16)
-    doc.text('Smart Park Analysis Report — Della Silla', 14, 20)
-    doc.setFont('helvetica','normal'); doc.setFontSize(10)
-
-    let y = 32
-    const maxW = doc.internal.pageSize.getWidth() - 28
-    for (const line of plain) {
-      const wrapped = doc.splitTextToSize(line, maxW)
-      for (const wl of wrapped) {
-        if (y > doc.internal.pageSize.getHeight() - 15) { doc.addPage(); y = 20 }
-        doc.text(wl, 14, y); y += 5
-      }
+    while (renderedHeight < canvas.height) {
+      const pageCanvas = document.createElement('canvas')
+      pageCanvas.width = canvas.width
+      pageCanvas.height = Math.min(pageCanvasHeight, canvas.height - renderedHeight)
+      const ctx = pageCanvas.getContext('2d')
+      ctx.drawImage(canvas, 0, renderedHeight, canvas.width, pageCanvas.height, 0, 0, canvas.width, pageCanvas.height)
+      const pageImg = pageCanvas.toDataURL('image/png', 1)
+      if (page > 0) doc.addPage()
+      doc.addImage(pageImg, 'PNG', margin, margin, imgWidth, (pageCanvas.height * imgWidth) / canvas.width)
+      renderedHeight += pageCanvasHeight
+      page++
     }
+
     doc.save('SmartPark_Report.pdf')
-  } catch {
-    const w = window.open('', '_blank')
-    if (w) { w.document.write(`<html><body><pre>${reportContent.value}</pre></body></html>`); w.print() }
+  } catch (e) {
+    error.value = 'PDF download failed: ' + (e.message || 'Unknown error')
   } finally { downloadingPDF.value = false }
 }
 
 async function downloadWord () {
   downloadingWord.value = true
   try {
+    const chartsHtml = reportChartImagesHtml()
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Smart Park Report</title>
-    <style>body{font-family:Calibri,sans-serif;font-size:11pt;margin:2.5cm}
-    h1{font-size:20pt;color:#1a237e}h2{font-size:15pt;color:#283593;border-bottom:1px solid #9fa8da}
-    h3{font-size:13pt;color:#3949ab}table{border-collapse:collapse;width:100%;margin:12pt 0}
-    th{background:#3f51b5;color:#fff;padding:6pt 10pt}td{border:1pt solid #c5cae9;padding:5pt 8pt}
-    tr:nth-child(even){background:#e8eaf6}</style></head><body>${renderedReport.value}</body></html>`
+    <style>
+    body{font-family:"Times New Roman",Times,serif;font-size:12pt;margin:2.1cm;background:#ffffff;color:#111827}
+    h1{font-family:"Times New Roman",Times,serif;font-size:22pt;color:#111827;border-bottom:3pt solid #2563eb;padding-bottom:8pt}
+    h2{font-family:"Times New Roman",Times,serif;font-size:16pt;color:#1d4ed8;border-bottom:1pt solid #bfdbfe;padding-bottom:4pt;margin-top:18pt}
+    h3{font-family:"Times New Roman",Times,serif;font-size:13pt;color:#0369a1;margin-top:14pt}
+    p{line-height:1.45}table{border-collapse:collapse;width:100%;margin:12pt 0;border:1pt solid #cbd5e1}
+    th{background:#1d4ed8;color:#fff;padding:7pt 10pt;text-align:left}
+    td{border:1pt solid #dbeafe;padding:6pt 8pt}tr:nth-child(even){background:#eff6ff}
+    .visuals{background:#f8fafc;border:1pt solid #bfdbfe;padding:14pt;margin-bottom:18pt}
+    .chart-grid{display:block}.chart-card{background:#fff;border:1pt solid #bfdbfe;padding:12pt;margin:12pt 0}
+    .chart-card img{width:100%;max-width:640px;display:block;margin:8pt auto}
+    </style></head><body><div class="visuals"><h1>Visual Analytics</h1><div class="chart-grid">${chartsHtml}</div></div>${renderedReport.value}</body></html>`
     const blob = new Blob([html], { type: 'application/msword;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -1481,7 +1857,114 @@ function weatherIcon (pred) {
 .ap-action-btn:hover:not(:disabled) { border-color: var(--border-hi); color: var(--text-primary); }
 .ap-action-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 .ap-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ap-report-export {
+  background: #ffffff;
+  color: #111827;
+  font-family: 'Times New Roman', Times, serif;
+}
 .ap-report-body { padding: 20px 24px; max-height: 60vh; overflow-y: auto; }
+.ap-report-export .ap-report-body { max-height: none; overflow: visible; }
+.ap-report-visuals {
+  padding: 24px;
+  border-bottom: 1px solid #bfdbfe;
+  background: linear-gradient(180deg, #eff6ff, #ffffff);
+}
+.ap-report-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+.ap-report-kicker {
+  color: #1d4ed8;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ap-report-hero h2 {
+  color: #111827;
+  font-size: 1.45rem;
+  margin: 4px 0 6px;
+}
+.ap-report-hero p {
+  color: #475569;
+  margin: 0;
+  max-width: 620px;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.ap-report-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(110px, 1fr));
+  gap: 8px;
+  min-width: 260px;
+}
+.ap-report-stat {
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #ffffff;
+}
+.ap-report-stat span {
+  display: block;
+  color: #1d4ed8;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.ap-report-stat strong {
+  display: block;
+  color: #111827;
+  font-size: 1.05rem;
+  margin-top: 2px;
+}
+.ap-report-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 14px;
+}
+.ap-report-chart-card {
+  min-height: 330px;
+  padding: 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.1);
+}
+.ap-report-chart-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.ap-report-chart-head h3 {
+  color: #111827;
+  font-size: 0.95rem;
+  margin: 0;
+}
+.ap-report-chart-type {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #dbeafe;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.ap-report-chart-wrap {
+  height: 230px;
+  position: relative;
+}
+.ap-report-chart-card p {
+  color: #475569;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  margin: 10px 0 0;
+}
 
 /* Delivery */
 .ap-delivery-section {
@@ -1640,17 +2123,17 @@ function weatherIcon (pred) {
 .ap-p:last-child { margin-bottom: 0; }
 .ap-latex-block {
   margin: 12px 0; padding: 12px 16px;
-  background: #0c1625; border: 1px solid rgba(139,92,246,0.3);
+  background: #f8fafc; border: 1px solid #cbd5e1;
   border-radius: 8px; overflow-x: auto;
 }
 .ap-latex-code {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.85rem; color: #c4b5fd; white-space: pre;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 0.9rem; color: #1e293b; white-space: pre;
 }
 .ap-latex-inline {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.82rem; color: #a5b4fc;
-  background: rgba(139,92,246,0.12); padding: 1px 6px; border-radius: 4px;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 0.9rem; color: #1d4ed8;
+  background: #eff6ff; padding: 1px 6px; border-radius: 4px;
 }
 .ap-inline-source {
   font-size: 0.68rem; color: #4a6180;
@@ -1658,21 +2141,21 @@ function weatherIcon (pred) {
 }
 
 /* Report */
-.rh1 { font-size: 1.3rem; font-weight: 700; color: #e2ecf8; margin: 24px 0 10px; border-bottom: 1px solid rgba(99,133,169,0.2); padding-bottom: 6px; }
-.rh2 { font-size: 1.05rem; font-weight: 600; color: #93c5fd; margin: 20px 0 8px; border-bottom: 1px solid rgba(99,133,169,0.12); padding-bottom: 4px; }
-.rh3 { font-size: 0.92rem; font-weight: 600; color: #60a5fa; margin: 14px 0 6px; }
-.rh4 { font-size: 0.85rem; font-weight: 600; color: #7aa8d8; margin: 10px 0 4px; }
-.rp  { margin: 0 0 8px; font-size: 0.875rem; line-height: 1.7; color: #cbd5e1; }
+.rh1 { font-family: 'Times New Roman', Times, serif; font-size: 1.65rem; font-weight: 700; color: #111827; margin: 24px 0 10px; border-bottom: 2px solid #2563eb; padding-bottom: 6px; }
+.rh2 { font-family: 'Times New Roman', Times, serif; font-size: 1.25rem; font-weight: 700; color: #1d4ed8; margin: 20px 0 8px; border-bottom: 1px solid #bfdbfe; padding-bottom: 4px; }
+.rh3 { font-family: 'Times New Roman', Times, serif; font-size: 1.05rem; font-weight: 700; color: #0369a1; margin: 14px 0 6px; }
+.rh4 { font-family: 'Times New Roman', Times, serif; font-size: 0.95rem; font-weight: 700; color: #334155; margin: 10px 0 4px; }
+.rp  { margin: 0 0 8px; font-size: 1rem; line-height: 1.7; color: #1f2937; }
 .ap-ul { padding-left: 20px; margin: 6px 0; }
-.ap-ul li { font-size: 0.875rem; margin-bottom: 4px; color: #cbd5e1; }
+.ap-ul li { font-family: 'Times New Roman', Times, serif; font-size: 1rem; margin-bottom: 4px; color: #1f2937; }
 .rag { font-size: 1em; }
 
 .ap-table-wrap { overflow-x: auto; margin: 12px 0; }
-.ap-report-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-.ap-report-table th { background: rgba(59,130,246,0.2); color: #93c5fd; font-weight: 600; padding: 8px 12px; text-align: left; border-bottom: 1px solid rgba(99,133,169,0.25); }
-.ap-report-table td { padding: 7px 12px; border-bottom: 1px solid rgba(99,133,169,0.1); color: #cbd5e1; }
-.ap-report-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+.ap-report-table { width: 100%; border-collapse: collapse; font-family: 'Times New Roman', Times, serif; font-size: 0.95rem; border: 1px solid #cbd5e1; }
+.ap-report-table th { background: #1d4ed8; color: #ffffff; font-weight: 700; padding: 8px 12px; text-align: left; border: 1px solid #1e40af; }
+.ap-report-table td { padding: 7px 12px; border: 1px solid #dbeafe; color: #1f2937; }
+.ap-report-table tr:nth-child(even) td { background: #eff6ff; }
 .ap-code { background: #0c1625; border: 1px solid rgba(99,133,169,0.2); border-radius: 6px; padding: 10px 14px; font-size: 0.78rem; font-family: 'JetBrains Mono', monospace; color: #94a3b8; overflow-x: auto; white-space: pre; margin: 8px 0; }
 .ap-chart-json-block { padding: 8px 12px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); border-radius: 6px; font-size: 0.78rem; color: #60a5fa; margin: 6px 0; }
-.ap-report-inner { color: #cbd5e1; }
+.ap-report-inner { color: #1f2937; font-family: 'Times New Roman', Times, serif; }
 </style>

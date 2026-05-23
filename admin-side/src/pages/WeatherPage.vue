@@ -39,9 +39,10 @@ const nearbyLocations = ref([])
 
 // Configuration
 const availableMeasurements = [
-  { measurement: 'Sensor_S6000U_data2', device_id: '' },
+  { measurement: 'Sensor_S6000U_data_GSP2', device_id: '' },
 
 ]
+const DEFAULT_MEASUREMENT = availableMeasurements[0]?.measurement || ''
 
 const REFRESH_INTERVAL = 300000 // 5 minutes
 const GEOCODING_DELAY = 1000 // Rate limiting for geocoding API
@@ -115,6 +116,40 @@ function getAirQualityLevel(value) {
 }
 
 const airQualityInfo = computed(() => getAirQualityLevel(weatherData.value.airQuality))
+
+function getDeviceId(reading, fallback = 'unknown') {
+  return String(reading?.device_id ?? fallback)
+}
+
+function getLatestReadingsByDevice(data, fallbackDeviceId = 'unknown') {
+  const latestByDevice = new Map()
+
+  data.forEach((reading) => {
+    if (!reading?.time) return
+
+    const deviceId = getDeviceId(reading, fallbackDeviceId)
+    const current = latestByDevice.get(deviceId)
+
+    if (!current || new Date(reading.time) > new Date(current.time)) {
+      latestByDevice.set(deviceId, { ...reading, device_id: deviceId })
+    }
+  })
+
+  return Array.from(latestByDevice.values()).sort((a, b) =>
+    String(a.device_id).localeCompare(String(b.device_id), undefined, { numeric: true })
+  )
+}
+
+function getLatestReading(data, deviceId = null) {
+  const readings = deviceId
+    ? data.filter(reading => getDeviceId(reading) === String(deviceId))
+    : data
+
+  return readings
+    .filter(reading => reading?.time)
+    .sort((a, b) => new Date(a.time) - new Date(b.time))
+    .at(-1)
+}
 
 // ===========================
 // GEOCODING
@@ -343,36 +378,34 @@ async function fetchDevices() {
         //const res = await fetch(`${API_BASE}/api/weather/forecast/?minutes=60&measurement=${device.measurement}`)
         const data = await api.get(`/api/weather/forecast/?minutes=60&measurement=${device.measurement}`)
         if (!Array.isArray(data) || data.length === 0) return null
-        
-        // Get the latest reading (last item in array)
-        const latest = data[data.length - 1]
-        
-        // Skip if no timestamp or no coordinates
-        if (!latest.time) return null
-        
-        // Only geocode if coordinates are available
-        let locationName = 'Unical, Rende, Calabria'
-        if (latest.latitude != null && latest.longitude != null) {
-          locationName = await queueGeocode(latest.latitude, latest.longitude)
-        }
-        
-        return {
-          device_id: latest.device_id,
-          measurement: device.measurement,
-          name: `Robustel Device ${latest.device_id}`,
-          locationName,
-          temp: celsiusToFahrenheit(latest.temperature),
-          tempC: latest.temperature,
-          humidity: latest.humidity,
-          pressure: latest.pressure,
-          latitude: latest.latitude,
-          longitude: latest.longitude,
-          light: latest.light,
-          noise: latest.noise,
-          weatherPrediction: latest.weather_prediction || '—',
-          predictionConfidence: latest.prediction_confidence || 0,
-          lastUpdate: latest.time
-        }
+
+        const latestReadings = getLatestReadingsByDevice(data, device.device_id || 'unknown')
+
+        return Promise.all(latestReadings.map(async (latest) => {
+          // Only geocode if coordinates are available
+          let locationName = 'Unical, Rende, Calabria'
+          if (latest.latitude != null && latest.longitude != null) {
+            locationName = await queueGeocode(latest.latitude, latest.longitude)
+          }
+
+          return {
+            device_id: latest.device_id,
+            measurement: device.measurement,
+            name: `Robustel Device ${latest.device_id}`,
+            locationName,
+            temp: celsiusToFahrenheit(latest.temperature),
+            tempC: latest.temperature,
+            humidity: latest.humidity,
+            pressure: latest.pressure,
+            latitude: latest.latitude,
+            longitude: latest.longitude,
+            light: latest.light,
+            noise: latest.noise,
+            weatherPrediction: latest.weather_prediction || '—',
+            predictionConfidence: latest.prediction_confidence || 0,
+            lastUpdate: latest.time
+          }
+        }))
       } catch (e) {
         console.error(`Fetch error for ${device.measurement}:`, e)
         return null
@@ -380,7 +413,7 @@ async function fetchDevices() {
     })
     
     const results = await Promise.all(devicePromises)
-    nearbyLocations.value = results.filter(device => device !== null)
+    nearbyLocations.value = results.flat().filter(device => device !== null)
     
     if (map.value) {
       updateMapMarkers()
@@ -391,7 +424,7 @@ async function fetchDevices() {
   }
 }
 
-async function fetchWeatherData(measurement = 'Sensor_S6000U_data2') {
+async function fetchWeatherData(measurement = DEFAULT_MEASUREMENT, deviceId = null) {
   try {
     loading.value = true
     error.value = ''
@@ -402,11 +435,11 @@ async function fetchWeatherData(measurement = 'Sensor_S6000U_data2') {
       throw new Error('No weather data available')
     }
     
-    // Get the latest reading (last item in array)
-    const latest = data[data.length - 1]
+    // Get the latest reading, optionally scoped to the selected device.
+    const latest = getLatestReading(data, deviceId)
     
     // Skip if no timestamp
-    if (!latest.time) {
+    if (!latest?.time) {
       throw new Error('No valid weather data with timestamp')
     }
     
@@ -462,7 +495,7 @@ function selectDevice(device) {
   selectedDevice.value = device
   currentLocation.value = `${device.locationName} (${device.latitude.toFixed(4)}, ${device.longitude.toFixed(4)})`
   
-  fetchWeatherData(device.measurement)
+  fetchWeatherData(device.measurement, device.device_id)
   
   if (map.value) {
     map.value.setView([device.latitude, device.longitude], 16, {
@@ -510,7 +543,7 @@ onMounted(() => {
     fetchDevices()
     
     if (selectedDevice.value) {
-      fetchWeatherData(selectedDevice.value.measurement)
+      fetchWeatherData(selectedDevice.value.measurement, selectedDevice.value.device_id)
     } else {
       fetchWeatherData()
     }

@@ -4,7 +4,7 @@ from typing import Optional, List
 
 class WeatherPoint(BaseModel):
     time: Optional[datetime] = None
-    device_id: Optional[int] = None
+    device_id: Optional[str] = None
     temperature: Optional[float] = None
     humidity: Optional[float] = None
     pressure: Optional[float] = None

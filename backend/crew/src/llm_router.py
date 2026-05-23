@@ -81,7 +81,6 @@ class ProviderConfig:
 
 
 PROVIDERS: list[ProviderConfig] = [
-    # ── 1. AWS Bedrock (Claude Sonnet) ──────────────────────────────────────
     ProviderConfig(
         name="Groq (llama-3.3-70b)",
         model="groq/llama-3.3-70b-versatile",
@@ -95,20 +94,28 @@ PROVIDERS: list[ProviderConfig] = [
         api_key_env="GROQ_API_KEY",
         default_key="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",
     ),
-    # ── 3. OpenRouter (optional) ─────────────────────────────────────────────
+# ── 3. OpenRouter (optional) ─────────────────────────────────────────────
+
     ProviderConfig(
         name="OpenRouter (llama-3.3-70b)",
         model="openrouter/meta-llama/llama-3.3-70b-instruct",
         api_key_env="OPENROUTER_API_KEY",
         base_url="https://openrouter.ai/api/v1",
-        extra_headers={"HTTP-Referer": "https://smartpark.local", "X-Title": "SmartPark"},
+        extra_headers={
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": "SmartPark",
+        },
     ),
+
     ProviderConfig(
         name="OpenRouter (mistral-7b free)",
         model="openrouter/mistralai/mistral-7b-instruct:free",
         api_key_env="OPENROUTER_API_KEY",
         base_url="https://openrouter.ai/api/v1",
-        extra_headers={"HTTP-Referer": "https://smartpark.local", "X-Title": "SmartPark"},
+        extra_headers={
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": "SmartPark",
+        },
     ),
 ]
 

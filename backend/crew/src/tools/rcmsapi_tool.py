@@ -22,6 +22,7 @@ import json
 import os
 import logging
 from typing import Any, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from crewai.tools import BaseTool
@@ -103,27 +104,58 @@ def fetch_full_edge_snapshot() -> Dict[str, Any]:
     Aggregate helper: fetches system info, all devices, alerts, and diagnostics
     in one call.  Returns a consolidated dict suitable for LLM context.
     """
+    # 1. Fetch the base device list first (needed for enrichment)
     devices_raw = fetch_all_devices()
     devices = devices_raw if isinstance(devices_raw, list) else devices_raw.get("devices", devices_raw)
 
-    # Enrich each device with its sensor readings and status
     enriched_devices = []
     if isinstance(devices, list):
-        for dev in devices[:10]:  # cap at 10 to avoid huge prompts
-            dev_id = str(dev.get("id") or dev.get("device_id", ""))
-            if dev_id:
-                dev["sensors"] = fetch_device_sensors(dev_id)
-                dev["status"]  = fetch_device_status(dev_id)
-            enriched_devices.append(dev)
-    else:
-        enriched_devices = [devices]  # error passthrough
+        # Limit to 10 devices to avoid huge prompts
+        target_devices = devices[:10]
+
+        # Parallelize enrichment: fetch sensors and status for each device
+        with ThreadPoolExecutor() as executor:
+            # Create a map of future -> (device, type)
+            future_to_data = {}
+            for dev in target_devices:
+                dev_id = str(dev.get("id") or dev.get("device_id", ""))
+                if dev_id:
+                    # Fetch sensors
+                    future_to_data[executor.submit(fetch_device_sensors, dev_id)] = (dev, "sensors")
+                    # Fetch status
+                    future_to_data[executor.submit(fetch_device_status, dev_id)] = (dev, "status")
+
+            for future in as_completed(future_to_data):
+                dev, data_type = future_to_data[future]
+                try:
+                    result = future.result()
+                    dev[data_type] = result
+                except Exception as exc:
+                    dev[data_type] = {"error": str(exc)}
+
+        enriched_devices = target_devices
+
+    # 2. Parallelize system-level fetches
+    system_tasks = {
+        "system_info": fetch_system_info,
+        "network":     fetch_system_network,
+        "alerts":      fetch_active_alerts,
+        "diagnostics": fetch_diagnostics,
+    }
+
+    system_results = {}
+    with ThreadPoolExecutor() as executor:
+        future_to_task = {executor.submit(fn): name for name, fn in system_tasks.items()}
+        for future in as_completed(future_to_task):
+            name = future_to_task[future]
+            try:
+                system_results[name] = future.result()
+            except Exception as exc:
+                system_results[name] = {"error": str(exc)}
 
     return {
-        "system_info": fetch_system_info(),
-        "network":     fetch_system_network(),
-        "devices":     enriched_devices,
-        "alerts":      fetch_active_alerts(),
-        "diagnostics": fetch_diagnostics(),
+        **system_results,
+        "devices": enriched_devices,
     }
 
 

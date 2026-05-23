@@ -10,6 +10,7 @@ Auth: Firebase session (Bearer token)
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import functools
 import json
 import os
@@ -281,6 +282,61 @@ from(bucket: "{INFLUXDB_BUCKET}")
     return {"answer": answer, "chart": chart}
 
 
+def _query_latest_environment() -> dict[str, Any] | None:
+    if not INFLUXDB_BUCKET or not INFLUXDB_MEASUREMENT:
+        return None
+    flux = f'''
+from(bucket: "{INFLUXDB_BUCKET}")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "{INFLUXDB_MEASUREMENT}")
+  |> filter(fn: (r) => r._field == "temperature" or r._field == "humidity")
+  |> group(columns: ["device_id", "_field"])
+  |> last()
+  |> keep(columns: ["_time", "_field", "_value", "device_id"])
+'''
+    tables = influx_query(flux)
+    readings: dict[str, list[tuple[datetime, float, str]]] = {"temperature": [], "humidity": []}
+
+    for table in tables:
+        for record in table.records:
+            field = record.get_field()
+            if field not in readings:
+                continue
+            ts = record.get_time()
+            val = record.get_value()
+            if ts is None or val is None:
+                continue
+            try:
+                readings[field].append((ts, float(val), str(record.values.get("device_id", "unknown"))))
+            except (TypeError, ValueError):
+                continue
+
+    parts: list[str] = []
+    latest_times: list[datetime] = []
+    device_ids: set[str] = set()
+
+    for field, unit in (("temperature", "C"), ("humidity", "%")):
+        values = readings[field]
+        if not values:
+            continue
+        latest_times.extend(ts for ts, _, _ in values)
+        device_ids.update(device_id for _, _, device_id in values)
+        avg_value = sum(value for _, value, _ in values) / len(values)
+        parts.append(f"{field} {avg_value:.1f} {unit}")
+
+    if not parts:
+        return None
+
+    latest_time = max(latest_times).isoformat() if latest_times else "unknown"
+    device_count = len(device_ids)
+    answer = (
+        f"Current park readings: {', '.join(parts)}. "
+        f"Based on the latest reading from {device_count} device{'s' if device_count != 1 else ''}; "
+        f"last update: {latest_time}."
+    )
+    return {"answer": answer, "chart": None}
+
+
 @router.post(
     "/chat",
     summary="Smart Park AI Assistant (CrewAI + multi-LLM)",
@@ -354,7 +410,7 @@ async def crew_chat(
         }
 
     weather_prediction, prediction_confidence = _extract_weather(device_data)
-    timeout_seconds = int(os.getenv("CREW_TIMEOUT_SECONDS", "90"))
+    timeout_seconds = int(os.getenv("CREW_TIMEOUT_SECONDS", "45"))
 
     # Deterministic temperature analytics directly from InfluxDB.
     if _is_temperature_query(effective_query):
@@ -367,7 +423,7 @@ async def crew_chat(
             elif "today" in effective_query.lower():
                 direct = _query_temperature_today()
             else:
-                direct = None
+                direct = _query_latest_environment()
         except Exception as exc:
             direct_error = str(exc)
             direct = None
@@ -408,24 +464,23 @@ async def crew_chat(
             "context": context_payload,
         }
 
+    pool: concurrent.futures.ThreadPoolExecutor | None = None
     try:
         loop = asyncio.get_event_loop()
-        with __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor(
-            max_workers=1
-        ) as pool:
-            raw_answer = await asyncio.wait_for(
-                loop.run_in_executor(
-                    pool,
-                    functools.partial(
-                        run_crew,
-                        device_data=device_data or "",
-                        user_query=effective_query,
-                        language=lang,
-                        context_data=json.dumps(context_payload) if context_payload else "",
-                    ),
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        raw_answer = await asyncio.wait_for(
+            loop.run_in_executor(
+                pool,
+                functools.partial(
+                    run_crew,
+                    device_data=device_data or "",
+                    user_query=effective_query,
+                    language=lang,
+                    context_data=json.dumps(context_payload) if context_payload else "",
                 ),
-                timeout=timeout_seconds,
-            )
+            ),
+            timeout=timeout_seconds,
+        )
         raw_answer = str(raw_answer or "")
     except asyncio.TimeoutError:
         raise HTTPException(
@@ -449,6 +504,9 @@ async def crew_chat(
                 "debug": {"crew_pipeline_error": str(exc)},
             },
         }
+    finally:
+        if pool:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     answer_text, chart_data = _extract_chart(raw_answer)
     return {
@@ -525,24 +583,23 @@ from(bucket: "{INFLUXDB_BUCKET}")
 
     timeout_seconds = int(os.getenv("CREW_TIMEOUT_SECONDS", "120"))
 
+    pool: concurrent.futures.ThreadPoolExecutor | None = None
     try:
         loop = asyncio.get_event_loop()
-        with __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor(
-            max_workers=1
-        ) as pool:
-            markdown_report = await asyncio.wait_for(
-                loop.run_in_executor(
-                    pool,
-                    functools.partial(
-                        run_crew_report,
-                        device_data=device_data or "",
-                        user_query=effective_query,
-                        language=lang,
-                        context_data=json.dumps(context_payload) if context_payload else "",
-                    ),
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        markdown_report = await asyncio.wait_for(
+            loop.run_in_executor(
+                pool,
+                functools.partial(
+                    run_crew_report,
+                    device_data=device_data or "",
+                    user_query=effective_query,
+                    language=lang,
+                    context_data=json.dumps(context_payload) if context_payload else "",
                 ),
-                timeout=timeout_seconds,
-            )
+            ),
+            timeout=timeout_seconds,
+        )
         markdown_report = str(markdown_report or "")
     except asyncio.TimeoutError:
         raise HTTPException(
@@ -552,6 +609,9 @@ from(bucket: "{INFLUXDB_BUCKET}")
     except Exception as exc:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
+    finally:
+        if pool:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     return {
         "report": markdown_report,

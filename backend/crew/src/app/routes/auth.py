@@ -1,5 +1,6 @@
 import os
 import time
+import concurrent.futures
 from datetime import datetime, timedelta
 
 import requests
@@ -25,6 +26,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session")
 SESSION_EXPIRE_DAYS = int(os.getenv("SESSION_EXPIRE_DAYS", "5"))
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+FIRESTORE_AUTH_TIMEOUT_SECONDS = float(os.getenv("FIRESTORE_AUTH_TIMEOUT_SECONDS", "5"))
+FIRESTORE_AUTH_REQUIRED = os.getenv("FIRESTORE_AUTH_REQUIRED", "false").lower() == "true"
 
 
 def get_db():
@@ -57,9 +60,32 @@ class SessionStatusResponse(BaseModel):
     role: str
 
 
-def _get_admin_user(uid: str) -> dict:
+def _get_admin_user(uid: str, decoded_token: dict | None = None) -> dict:
     print(f"[AUTH] Fetching Firestore user doc for UID: {uid}")
-    user_doc = get_db().collection("users").document(uid).get()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(lambda: get_db().collection("users").document(uid).get())
+
+    try:
+        user_doc = future.result(timeout=FIRESTORE_AUTH_TIMEOUT_SECONDS)
+    except Exception as exc:
+        future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        print(f"[AUTH] Firestore lookup unavailable for UID {uid}: {type(exc).__name__}: {exc}")
+
+        if FIRESTORE_AUTH_REQUIRED:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Firestore user-role lookup is unavailable. Check Firebase service account credentials.",
+            ) from exc
+
+        decoded_token = decoded_token or {}
+        return {
+            "uid": uid,
+            "role": decoded_token.get("role") or decoded_token.get("admin_role") or "visitor",
+            "email": decoded_token.get("email", ""),
+        }
+    else:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     if not user_doc.exists:
         print(f"[AUTH] ERROR: No Firestore document found for UID: {uid}")
@@ -103,7 +129,7 @@ def get_firebase_admin_user(token: str = Depends(oauth2_scheme)) -> dict:
         decoded_token = firebase_auth.verify_id_token(token)
         uid = decoded_token.get("uid")
 
-        return _get_admin_user(uid)
+        return _get_admin_user(uid, decoded_token)
 
     except HTTPException:
         raise
@@ -162,7 +188,7 @@ def get_admin_session_user(request: Request) -> dict:
     # Step 2: look up user in Firestore — let HTTPException propagate as-is
     uid = decoded_token.get("uid")
     print(f"[AUTH] Token OK for UID: {uid}")
-    return _get_admin_user(uid)
+    return _get_admin_user(uid, decoded_token)
 
 
 # Shared login logic to avoid code duplication

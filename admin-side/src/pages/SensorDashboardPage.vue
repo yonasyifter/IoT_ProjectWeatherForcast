@@ -26,6 +26,150 @@ const sensorRows = computed(() => devices.value)
 
 let timer = null
 
+function toNumber(value) {
+  if (value === '—' || value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function firstNumber(reading, keys) {
+  for (const key of keys) {
+    const n = toNumber(reading?.[key])
+    if (n !== null) return n
+  }
+  return null
+}
+
+function parseStorageValue(value) {
+  if (value === null || value === undefined || value === '' || value === '—') return null
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+
+  const match = String(value).trim().match(/^([\d.]+)\s*([kmgt]?i?b?|bytes?)?$/i)
+  if (!match) return null
+
+  const n = Number(match[1])
+  if (!Number.isFinite(n)) return null
+
+  const unit = (match[2] || '').toLowerCase()
+  const multipliers = {
+    k: 1024,
+    kb: 1024,
+    kib: 1024,
+    m: 1024 ** 2,
+    mb: 1024 ** 2,
+    mib: 1024 ** 2,
+    g: 1024 ** 3,
+    gb: 1024 ** 3,
+    gib: 1024 ** 3,
+    t: 1024 ** 4,
+    tb: 1024 ** 4,
+    tib: 1024 ** 4,
+    b: 1,
+    byte: 1,
+    bytes: 1
+  }
+
+  return n * (multipliers[unit] || 1)
+}
+
+function usageFromTotalFree(total, free) {
+  const totalNumber = toNumber(total)
+  const freeNumber = toNumber(free)
+  if (totalNumber === null || freeNumber === null || totalNumber <= 0) return null
+  return Math.min(100, Math.max(0, ((totalNumber - freeNumber) / totalNumber) * 100))
+}
+
+function normalizeSystemMetrics(reading) {
+  const ramTotal = firstNumber(reading, ['EG5120_RAM_total_mb', 'ram_total_mb', 'RAM_total_mb'])
+  const ramFree = firstNumber(reading, ['EG5120_RAM_free_mb', 'ram_free_mb', 'RAM_free_mb'])
+  const storageTotalRaw = reading?.EG5120_Storage_total ?? reading?.storage_total ?? reading?.Storage_total
+  const storageFreeRaw = reading?.EG5120_Storage_free ?? reading?.storage_free ?? reading?.Storage_free
+  const storageTotal = parseStorageValue(storageTotalRaw)
+  const storageFree = parseStorageValue(storageFreeRaw)
+
+  return {
+    cpuTemperature: firstNumber(reading, ['EG5120_CPU_Temprature', 'EG5120_CPU_Temperature', 'CPU_temprature', 'CPU_temperature']),
+    cpuStatus: reading?.EG5120_CPU_status ?? '—',
+    ramTotalMb: ramTotal,
+    ramFreeMb: ramFree,
+    ramUsage: firstNumber(reading, ['EG5120_RAM_usage', 'EG5120_RAM_Usage', 'RAM_Usage', 'ram_usage']) ?? usageFromTotalFree(ramTotal, ramFree),
+    storageTotal: storageTotalRaw ?? '—',
+    storageFree: storageFreeRaw ?? '—',
+    storageUsage: firstNumber(reading, ['EG5120_Storage_usage', 'EG5120_Storage_Usage', 'Storage_Usage', 'storage_usage']) ?? usageFromTotalFree(storageTotal, storageFree)
+  }
+}
+
+function clampPercent(value) {
+  const n = toNumber(value)
+  if (n === null) return 0
+  return Math.min(100, Math.max(0, n))
+}
+
+function systemHealth(metric, value) {
+  const n = toNumber(value)
+  if (n === null) return { color: '#6c757d', label: 'No data' }
+
+  if (metric === 'cpu') {
+    if (n > 70) return { color: '#dc3545', label: 'Critical' }
+    if (n > 45) return { color: '#ffc107', label: 'Warning' }
+    return { color: '#20c997', label: 'Healthy' }
+  }
+
+  if (n > 80) return { color: '#dc3545', label: 'Critical' }
+  if (n > 70) return { color: '#ffc107', label: 'Warning' }
+  return { color: '#20c997', label: 'Healthy' }
+}
+
+function formatGaugeValue(value, unit) {
+  const n = toNumber(value)
+  if (n === null) return '—'
+  return `${n.toFixed(1)}${unit}`
+}
+
+const systemGauges = computed(() => {
+  const device = selectedDevice.value || {}
+  const gauges = [
+    {
+      key: 'cpu',
+      label: 'CPU Temperature',
+      icon: 'bi-cpu',
+      value: device.cpuTemperature,
+      unit: '°C',
+      percent: Math.min(100, Math.max(0, ((toNumber(device.cpuTemperature) ?? 0) / 80) * 100)),
+      detail: device.cpuStatus && device.cpuStatus !== '—' ? device.cpuStatus : 'Thresholds: 45°C / 70°C'
+    },
+    {
+      key: 'ram',
+      label: 'RAM Usage',
+      icon: 'bi-memory',
+      value: device.ramUsage,
+      unit: '%',
+      percent: clampPercent(device.ramUsage),
+      detail: device.ramTotalMb ? `${Math.round(device.ramFreeMb ?? 0)} MB free of ${Math.round(device.ramTotalMb)} MB` : 'Thresholds: 70% / 80%'
+    },
+    {
+      key: 'storage',
+      label: 'Storage Usage',
+      icon: 'bi-device-hdd',
+      value: device.storageUsage,
+      unit: '%',
+      percent: clampPercent(device.storageUsage),
+      detail: device.storageFree !== '—' && device.storageTotal !== '—' ? `${device.storageFree} free of ${device.storageTotal}` : 'Thresholds: 70% / 80%'
+    }
+  ]
+
+  return gauges.map(gauge => {
+    const health = systemHealth(gauge.key, gauge.value)
+    return {
+      ...gauge,
+      color: health.color,
+      status: health.label,
+      displayValue: formatGaugeValue(gauge.value, gauge.unit),
+      fillDegrees: `${gauge.percent * 3.6}deg`
+    }
+  })
+})
+
 async function loadLatest() {
   try {
     error.value = ''
@@ -68,6 +212,7 @@ async function loadLatest() {
     // Convert map to array, transform data, and sort by device_id
     devices.value = Array.from(deviceMap.values()).map(item => {
       const reading = item.latest
+      const systemMetrics = normalizeSystemMetrics(reading)
       return {
         deviceId: reading.device_id,
         temperature: reading.temperature ?? '—',
@@ -84,6 +229,7 @@ async function loadLatest() {
         vibrAccX: reading.vibrAccX ?? '—',
         vibrAccY: reading.vibrAccY ?? '—',
         vibrAccZ: reading.vibrAccZ ?? '—',
+        ...systemMetrics,
         observedAt: reading.time ? new Date(reading.time).toLocaleString() : '—',
         timestamp: reading.time,
         history: item.history.sort((a, b) => new Date(a.time) - new Date(b.time))
@@ -336,6 +482,9 @@ onUnmounted(() => {
           :vibrAccX="device.vibrAccX"
           :vibrAccY="device.vibrAccY"
           :vibrAccZ="device.vibrAccZ"
+          :cpu-temperature="device.cpuTemperature"
+          :ram-usage="device.ramUsage"
+          :storage-usage="device.storageUsage"
           :history="device.history"
           :device-id="device.deviceId"
           :observed-at="device.observedAt"
@@ -370,7 +519,7 @@ onUnmounted(() => {
       style="background-color: rgba(0,0,0,0.5);"
       @click.self="closeModal"
     >
-      <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+      <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable detail-modal-dialog">
         <div class="modal-content bg-dark text-white">
           <div class="modal-header border-secondary">
             <h5 class="modal-title">
@@ -380,75 +529,26 @@ onUnmounted(() => {
             <button type="button" class="btn-close btn-close-white" @click="closeModal"></button>
           </div>
           <div class="modal-body">
-            <!-- Current Readings -->
+            <!-- System Health Gauges -->
             <div class="card bg-black bg-opacity-25 border-secondary mb-4">
               <div class="card-header bg-black bg-opacity-50 border-secondary">
-                <h6 class="mb-0">Current Readings</h6>
+                <h6 class="mb-0">System Health Gauges</h6>
               </div>
               <div class="card-body">
-                <div class="row g-3">
-                  <div class="col-md-4">
-                    <div class="d-flex flex-column">
-                      <small class="text-secondary mb-1">Temperature</small>
-                      <strong class="fs-4 text-warning">
-                        {{ formatValue(selectedDevice?.temperature, '°C') }}
-                      </strong>
-                    </div>
-                  </div>
-                  <div class="col-md-4">
-                    <div class="d-flex flex-column">
-                      <small class="text-secondary mb-1">Humidity</small>
-                      <strong class="fs-4 text-info">
-                        {{ formatValue(selectedDevice?.humidity, '%') }}
-                      </strong>
-                    </div>
-                  </div>
-                  <div class="col-md-4">
-                    <div class="d-flex flex-column">
-                      <small class="text-secondary mb-1">Pressure</small>
-                      <strong class="fs-4 text-success">
-                        {{ formatValue(selectedDevice?.pressure, 'kPa') }}
-                      </strong>
-                    </div>
-                  </div>
-                  <div class="col-md-3">
-                    <div class="d-flex flex-column">
-                      <small class="text-secondary mb-1">Light</small>
-                      <strong class="fs-5 text-warning">
-                        {{ formatValue(selectedDevice?.light, 'lx') }}
-                      </strong>
-                    </div>
-                  </div>
-                  <div class="col-md-3">
-                    <div class="d-flex flex-column">
-                      <small class="text-secondary mb-1">Noise</small>
-                      <strong class="fs-5 text-info">
-                        {{ formatValue(selectedDevice?.noise, 'dB') }}
-                      </strong>
-                    </div>
-                  </div>
-                  <div class="col-md-3">
-                    <div class="d-flex flex-column">
-                      <small class="text-secondary mb-1">ToF</small>
-                      <strong class="fs-5 text-success">
-                        {{ formatValue(selectedDevice?.tof, 'cm') }}
-                      </strong>
-                    </div>
-                  </div>
-                  <div class="col-md-3">
-                    <div class="d-flex flex-column">
-                      <small class="text-secondary mb-1">Angle</small>
-                      <strong class="fs-5 text-primary">
-                        {{ formatValue(selectedDevice?.angle, 'deg') }}
-                      </strong>
-                    </div>
-                  </div>
-                  <div class="col-md-12">
-                    <div class="d-flex flex-column">
-                      <small class="text-secondary mb-1">Weather Prediction</small>
-                      <strong class="fs-5 text-light">
-                        {{ selectedDevice?.weather_prediction || '—' }}
-                      </strong>
+                <div class="row g-3 system-gauge-grid">
+                  <div v-for="gauge in systemGauges" :key="gauge.key" class="col-12 col-md-4">
+                    <div class="system-gauge-card h-100" :style="{ '--gauge-color': gauge.color, '--gauge-fill': gauge.fillDegrees }">
+                      <div class="system-gauge">
+                        <div class="system-gauge-inner">
+                          <i :class="['bi', gauge.icon, 'system-gauge-icon']"></i>
+                          <strong>{{ gauge.displayValue }}</strong>
+                        </div>
+                      </div>
+                      <div class="text-center mt-3">
+                        <div class="fw-semibold text-white">{{ gauge.label }}</div>
+                        <span class="badge mt-2" :style="{ backgroundColor: gauge.color }">{{ gauge.status }}</span>
+                        <div class="text-secondary small mt-2">{{ gauge.detail }}</div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -539,6 +639,54 @@ onUnmounted(() => {
 
 .modal-content {
   animation: modalZoom 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.detail-modal-dialog {
+  max-width: min(calc(100vw - 2rem), calc(800px + 10cm));
+}
+
+.system-gauge-card {
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--gauge-color), transparent 50%);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.system-gauge {
+  width: min(100%, 156px);
+  aspect-ratio: 1;
+  margin-inline: auto;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    conic-gradient(var(--gauge-color) var(--gauge-fill), rgba(255, 255, 255, 0.12) 0deg),
+    radial-gradient(circle, rgba(255, 255, 255, 0.08), transparent 66%);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--gauge-color), transparent 78%);
+}
+
+.system-gauge-inner {
+  width: 72%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.25rem;
+  background: #15191f;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.system-gauge-inner strong {
+  color: #fff;
+  font-size: clamp(1.35rem, 4vw, 1.8rem);
+  line-height: 1;
+}
+
+.system-gauge-icon {
+  color: var(--gauge-color);
+  font-size: 1.35rem;
+  line-height: 1;
 }
 
 @keyframes modalZoom {

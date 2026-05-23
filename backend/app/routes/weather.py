@@ -18,26 +18,28 @@ def get_weather_forecast(
 from(bucket: "{INFLUXDB_BUCKET}")
   |> range(start: -{minutes}m)
   |> filter(fn: (r) => r._measurement == "{measurement}")
-  |> keep(columns: ["_time","_field","_value"])
+  |> keep(columns: ["_time","_field","_value","device_id"])
 '''
 
     tables = influx_query(flux)
 
-    # Influx results are "tall": each record is (time, field, value).
-    # We reshape into "wide" JSON: one object per time with multiple fields.
-    by_time: Dict[str, Dict[str, Any]] = {}
+    # Influx results are "tall": each record is (time, device_id, field, value).
+    # We reshape into "wide" JSON: one object per time/device pair.
+    by_time_device: Dict[tuple[str, str], Dict[str, Any]] = {}
 
     for table in tables:
         for record in table.records:
             t = record.get_time().isoformat()
+            device_id = str(record.values.get("device_id", "unknown"))
             field = record.get_field()
             value = record.get_value()
+            key = (t, device_id)
 
-            if t not in by_time:
-                by_time[t] = {"time": record.get_time()}
-            by_time[t][field] = value
+            if key not in by_time_device:
+                by_time_device[key] = {"time": record.get_time(), "device_id": device_id}
+            by_time_device[key][field] = value
 
     # Convert dict->list, sort by time ascending
-    result = list(by_time.values())
+    result = list(by_time_device.values())
     result.sort(key=lambda x: x["time"])
     return result

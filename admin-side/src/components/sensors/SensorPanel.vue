@@ -20,6 +20,9 @@ const props = defineProps({
   vibrAccX: { type: [String, Number], default: '—' },
   vibrAccY: { type: [String, Number], default: '—' },
   vibrAccZ: { type: [String, Number], default: '—' },
+  cpuTemperature: { type: [String, Number], default: '—' },
+  ramUsage: { type: [String, Number], default: '—' },
+  storageUsage: { type: [String, Number], default: '—' },
   history: { type: Array, default: () => [] },
   deviceId: { type: String, default: '—' },
   observedAt: { type: String, default: '' },
@@ -79,6 +82,57 @@ const tempChartOption = computed(() => computeChartOption('temperature', '#ff6b6
 const humChartOption = computed(() => computeChartOption('humidity', '#0dcaf0'))
 const pressChartOption = computed(() => computeChartOption('pressure', '#20c997'))
 
+function toNumber(value) {
+  if (value === '—' || value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function metricHealth(metric, value) {
+  const n = toNumber(value)
+  if (n === null) return { color: '#6c757d', label: 'No data' }
+
+  if (metric === 'cpu') {
+    if (n > 80) return { color: '#dc3545', label: 'Critical' }
+    if (n > 50) return { color: '#ffc107', label: 'Warning' }
+    return { color: '#20c997', label: 'Healthy' }
+  }
+
+  if (n > 90) return { color: '#dc3545', label: 'Critical' }
+  if (n > 70) return { color: '#ffc107', label: 'Warning' }
+  return { color: '#20c997', label: 'Healthy' }
+}
+
+function formatMetric(value, unit) {
+  const n = toNumber(value)
+  if (n === null) return '—'
+  return `${n.toFixed(1)}${unit}`
+}
+
+const systemMetrics = computed(() => [
+  {
+    key: 'cpu',
+    label: 'CPU',
+    icon: 'bi-cpu',
+    value: formatMetric(props.cpuTemperature, '°C'),
+    ...metricHealth('cpu', props.cpuTemperature)
+  },
+  {
+    key: 'ram',
+    label: 'RAM',
+    icon: 'bi-memory',
+    value: formatMetric(props.ramUsage, '%'),
+    ...metricHealth('ram', props.ramUsage)
+  },
+  {
+    key: 'storage',
+    label: 'Storage',
+    icon: 'bi-device-hdd',
+    value: formatMetric(props.storageUsage, '%'),
+    ...metricHealth('storage', props.storageUsage)
+  }
+])
+
 async function handleCardClick() {
   isZooming.value = true
   setTimeout(() => {
@@ -125,6 +179,19 @@ async function handleCardClick() {
       <div class="text-white-50 small mb-4 d-flex align-items-center gap-2">
         <i class="bi bi-clock-history"></i>
         <span>{{ observedAt }}</span>
+      </div>
+
+      <!-- Edge System Metrics -->
+      <div class="row g-2 mb-4">
+        <div v-for="metric in systemMetrics" :key="metric.key" class="col-12 col-sm-4">
+          <div class="system-chip" :style="{ '--system-color': metric.color }" :title="metric.status">
+            <i :class="['bi', metric.icon]"></i>
+            <div class="min-w-0">
+              <div class="system-chip-label">{{ metric.label }}</div>
+              <div class="system-chip-value">{{ metric.value }}</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Weather Metrics Grid -->
@@ -248,6 +315,40 @@ async function handleCardClick() {
 
 .letter-spacing {
   letter-spacing: 0.05em;
+}
+
+.system-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 58px;
+  padding: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--system-color), transparent 50%);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--system-color), transparent 86%);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.system-chip i {
+  color: var(--system-color);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.system-chip-label {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.system-chip-value {
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
 @keyframes spinner {
