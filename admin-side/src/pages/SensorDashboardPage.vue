@@ -115,8 +115,8 @@ function systemHealth(metric, value) {
     return { color: '#20c997', label: 'Healthy' }
   }
 
-  if (n > 80) return { color: '#dc3545', label: 'Critical' }
-  if (n > 70) return { color: '#ffc107', label: 'Warning' }
+  if (n > 90) return { color: '#dc3545', label: 'Critical' }
+  if (n > 80) return { color: '#ffc107', label: 'Warning' }
   return { color: '#20c997', label: 'Healthy' }
 }
 
@@ -145,7 +145,7 @@ const systemGauges = computed(() => {
       value: device.ramUsage,
       unit: '%',
       percent: clampPercent(device.ramUsage),
-      detail: device.ramTotalMb ? `${Math.round(device.ramFreeMb ?? 0)} MB free of ${Math.round(device.ramTotalMb)} MB` : 'Thresholds: 70% / 80%'
+      detail: device.ramTotalMb ? `${Math.round(device.ramFreeMb ?? 0)} MB free of ${Math.round(device.ramTotalMb)} MB` : 'Thresholds: 80% / 90%'
     },
     {
       key: 'storage',
@@ -154,7 +154,7 @@ const systemGauges = computed(() => {
       value: device.storageUsage,
       unit: '%',
       percent: clampPercent(device.storageUsage),
-      detail: device.storageFree !== '—' && device.storageTotal !== '—' ? `${device.storageFree} free of ${device.storageTotal}` : 'Thresholds: 70% / 80%'
+      detail: device.storageFree !== '—' && device.storageTotal !== '—' ? `${device.storageFree} free of ${device.storageTotal}` : 'Thresholds: 80% / 90%'
     }
   ]
 
@@ -535,7 +535,7 @@ onUnmounted(() => {
                 <h6 class="mb-0">System Health Gauges</h6>
               </div>
               <div class="card-body">
-                <div class="row g-3 system-gauge-grid">
+                <div class="row g-3">
                   <div v-for="gauge in systemGauges" :key="gauge.key" class="col-12 col-md-4">
                     <div class="system-gauge-card h-100" :style="{ '--gauge-color': gauge.color, '--gauge-fill': gauge.fillDegrees }">
                       <div class="system-gauge">
@@ -642,7 +642,7 @@ onUnmounted(() => {
 }
 
 .detail-modal-dialog {
-  max-width: min(calc(100vw - 2rem), calc(800px + 10cm));
+  max-width: min(calc(100vw - 2rem), calc(800px + 14cm));
 }
 
 .system-gauge-card {

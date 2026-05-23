@@ -10,16 +10,24 @@ Auth: Firebase session (Bearer token)
 from __future__ import annotations
 
 import asyncio
+import base64
 import concurrent.futures
 import functools
 import json
 import os
 import re
+import smtplib
+import ssl
 import traceback
 from datetime import datetime
+from email.message import EmailMessage
 from typing import Any
+from urllib import error as urlerror
+from urllib import parse as urlparse
+from urllib import request as urlrequest
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel
 
 from app.config import INFLUXDB_BUCKET, INFLUXDB_MEASUREMENT
 from app.influx import query as influx_query
@@ -41,6 +49,14 @@ except Exception:  # noqa: BLE001
     VOICE_AVAILABLE = False
 
 router = APIRouter()
+
+
+class ReportDeliveryRequest(BaseModel):
+    channel: str
+    contact: str
+    subject: str = "Smart Park Report"
+    html: str | None = None
+    text: str | None = None
 
 SUPPORTED_LANGUAGES: set[str] = {
     "en",
@@ -80,6 +96,145 @@ def _err(key: str, language: str) -> str:
     return msgs.get(language, msgs.get("en", "An error occurred."))
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _html_to_text(html: str | None) -> str:
+    text = re.sub(r"<style[\s\S]*?</style>", "", html or "", flags=re.I)
+    text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.I)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"</(p|div|section|h1|h2|h3|li|tr)>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _require_report_body(payload: ReportDeliveryRequest) -> tuple[str, str]:
+    html = (payload.html or "").strip()
+    text = (payload.text or "").strip() or _html_to_text(html)
+    if not html and not text:
+        raise HTTPException(status_code=400, detail="Report body is empty.")
+    return html, text
+
+
+def _send_report_email(payload: ReportDeliveryRequest) -> None:
+    contact = payload.contact.strip()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", contact):
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", "465" if _env_bool("SMTP_SSL") else "587"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_from = os.getenv("SMTP_FROM") or smtp_user
+    if not smtp_host or not smtp_from:
+        raise HTTPException(
+            status_code=503,
+            detail="Email delivery is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM.",
+        )
+
+    html, text = _require_report_body(payload)
+    message = EmailMessage()
+    message["Subject"] = payload.subject or "Smart Park Report"
+    message["From"] = smtp_from
+    message["To"] = contact
+    message.set_content(text)
+    if html:
+        message.add_alternative(html, subtype="html")
+
+    try:
+        if _env_bool("SMTP_SSL", smtp_port == 465):
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ssl.create_default_context(), timeout=30) as smtp:
+                if smtp_user and smtp_password:
+                    smtp.login(smtp_user, smtp_password)
+                smtp.send_message(message)
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp:
+                if _env_bool("SMTP_TLS", True):
+                    smtp.starttls(context=ssl.create_default_context())
+                if smtp_user and smtp_password:
+                    smtp.login(smtp_user, smtp_password)
+                smtp.send_message(message)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Email delivery failed: {exc}") from exc
+
+
+def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+    data = json.dumps(payload).encode("utf-8")
+    req = urlrequest.Request(url, data=data, headers={**headers, "Content-Type": "application/json"}, method="POST")
+    try:
+        with urlrequest.urlopen(req, timeout=30) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else {}
+    except urlerror.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=502, detail=f"WhatsApp delivery failed: {detail}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"WhatsApp delivery failed: {exc}") from exc
+
+
+def _post_form(url: str, payload: dict[str, str], headers: dict[str, str]) -> dict[str, Any]:
+    data = urlparse.urlencode(payload).encode("utf-8")
+    req = urlrequest.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urlrequest.urlopen(req, timeout=30) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else {}
+    except urlerror.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=502, detail=f"WhatsApp delivery failed: {detail}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"WhatsApp delivery failed: {exc}") from exc
+
+
+def _send_report_whatsapp(payload: ReportDeliveryRequest) -> None:
+    contact = re.sub(r"[\s()-]", "", payload.contact.strip())
+    if not re.match(r"^\+\d{8,15}$", contact):
+        raise HTTPException(status_code=400, detail="Please enter a WhatsApp number in international format, for example +393511204817.")
+
+    _, text = _require_report_body(payload)
+    message_text = text[:3800]
+
+    meta_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+    meta_phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    if meta_token and meta_phone_id:
+        _post_json(
+            f"https://graph.facebook.com/v20.0/{meta_phone_id}/messages",
+            {
+                "messaging_product": "whatsapp",
+                "to": contact.lstrip("+"),
+                "type": "text",
+                "text": {"preview_url": False, "body": message_text},
+            },
+            {"Authorization": f"Bearer {meta_token}"},
+        )
+        return
+
+    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_from = os.getenv("TWILIO_WHATSAPP_FROM")
+    if twilio_sid and twilio_token and twilio_from:
+        auth = base64.b64encode(f"{twilio_sid}:{twilio_token}".encode("utf-8")).decode("ascii")
+        _post_form(
+            f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json",
+            {"From": f"whatsapp:{twilio_from}", "To": f"whatsapp:{contact}", "Body": message_text},
+            {"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        return
+
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "WhatsApp delivery is not configured. Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID "
+            "for Meta Cloud API, or TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_WHATSAPP_FROM for Twilio."
+        ),
+    )
+
+
 def _coerce_json_to_str(value: Any, fallback: str | None) -> str | None:
     if value is None:
         return fallback
@@ -108,53 +263,72 @@ def _extract_chart(answer: str) -> tuple[str, dict[str, Any] | None]:
     Scan the AI answer for a JSON chart block.
     Returns (clean_text, chart_dict_or_none).
     """
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", answer, re.DOTALL | re.IGNORECASE)
-    raw_json = None
-    bare_match = None
-
-    if fence_match:
-        raw_json = fence_match.group(1)
-    else:
-        bare_match = re.search(r'(\{[^{}]*"chart_type"[^{}]*\})', answer, re.DOTALL)
-        if bare_match:
-            raw_json = bare_match.group(1)
-
-    if not raw_json:
-        return answer.strip(), None
-
-    try:
-        chart = json.loads(raw_json)
+    for fence_match in re.finditer(r"```(?:json)?\s*([\s\S]*?)\s*```", answer, re.IGNORECASE):
+        raw_json = fence_match.group(1).strip()
+        if '"chart_type"' not in raw_json and "'chart_type'" not in raw_json:
+            continue
+        try:
+            chart = json.loads(raw_json)
+        except (json.JSONDecodeError, ValueError):
+            continue
         if not isinstance(chart, dict) or "chart_type" not in chart:
-            return answer.strip(), None
+            continue
 
-        clean = answer
-        if fence_match:
-            clean = answer[: fence_match.start()] + answer[fence_match.end() :]
-        elif bare_match:
-            clean = answer[: bare_match.start()] + answer[bare_match.end() :]
-
-        clean = clean.strip()
+        clean = (answer[: fence_match.start()] + answer[fence_match.end() :]).strip()
         if not clean and chart.get("description"):
             clean = str(chart["description"])
         return clean, chart
-    except (json.JSONDecodeError, ValueError):
-        return answer.strip(), None
+
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", answer):
+        snippet = answer[match.start() :]
+        if '"chart_type"' not in snippet[:500] and "'chart_type'" not in snippet[:500]:
+            continue
+        try:
+            chart, end = decoder.raw_decode(snippet)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(chart, dict) or "chart_type" not in chart:
+            continue
+
+        clean = (answer[: match.start()] + snippet[end:]).strip()
+        if not clean and chart.get("description"):
+            clean = str(chart["description"])
+        return clean, chart
+
+    return answer.strip(), None
 
 
 def _extract_weather(device_data: str | None) -> tuple[str | None, float | None]:
-    """Pull weather prediction fields from raw sensor JSON if present."""
+    """Pull the latest real weather prediction fields from raw sensor JSON."""
     if not device_data:
         return None, None
     try:
         data = json.loads(device_data)
         if not isinstance(data, list):
             return None, None
+
+        candidates: list[dict[str, Any]] = []
         for device in data:
-            if isinstance(device, dict) and "weather_prediction" in device:
-                return (
-                    device["weather_prediction"],
-                    float(device.get("prediction_confidence", 0)),
-                )
+            if not isinstance(device, dict):
+                continue
+            prediction = device.get("weather_prediction")
+            if prediction in (None, "", "—", "N/A"):
+                continue
+            candidates.append(device)
+
+        if not candidates:
+            return None, None
+
+        def timestamp_value(item: dict[str, Any]) -> str:
+            return str(item.get("time") or item.get("timestamp") or "")
+
+        latest = max(candidates, key=timestamp_value)
+        confidence = float(latest.get("prediction_confidence", 0) or 0)
+        if 0 < confidence <= 1:
+            confidence *= 100
+        confidence = max(0, min(100, confidence))
+        return str(latest["weather_prediction"]), confidence
     except Exception:
         return None, None
     return None, None
@@ -178,6 +352,147 @@ def _extract_last_days(text: str) -> int | None:
 def _wants_chart(text: str) -> bool:
     q = text.lower()
     return "chart" in q or "graph" in q or "bar" in q or "plot" in q
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip().replace("%", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_float(row: dict[str, Any], keys: list[str]) -> float | None:
+    for key in keys:
+        value = _to_float(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _is_edge_resource_query(text: str) -> bool:
+    q = text.lower()
+    mentions_resource = any(term in q for term in ("cpu", "ram", "memory"))
+    mentions_edge = any(term in q for term in ("edge", "eg5120", "device", "gateway"))
+    return mentions_resource and mentions_edge
+
+
+def _latest_device_rows(device_data: str | None) -> list[dict[str, Any]]:
+    if not device_data:
+        return []
+    try:
+        rows = json.loads(device_data)
+    except Exception:
+        return []
+    if not isinstance(rows, list):
+        return []
+
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        device_id = str(row.get("device_id") or row.get("id") or "unknown")
+        current = latest.get(device_id)
+        row_time = str(row.get("time") or row.get("timestamp") or "")
+        current_time = str(current.get("time") or current.get("timestamp") or "") if current else ""
+        if current is None or row_time >= current_time:
+            latest[device_id] = row
+
+    return sorted(latest.values(), key=lambda item: str(item.get("device_id") or item.get("id") or ""))
+
+
+def _query_edge_resources_from_snapshot(device_data: str | None) -> dict[str, Any] | None:
+    latest_rows = _latest_device_rows(device_data)
+    if not latest_rows:
+        return None
+
+    lines: list[str] = []
+    chart_labels: list[str] = []
+    ram_values: list[float | None] = []
+    cpu_values: list[float | None] = []
+
+    for row in latest_rows:
+        device_id = str(row.get("device_id") or row.get("id") or "unknown")
+        cpu_usage = _first_float(row, [
+            "EG5120_CPU_Usage",
+            "EG5120_CPU_usage",
+            "CPU_Usage",
+            "CPU_usage",
+            "cpu_usage",
+            "cpuUsage",
+            "cpu_pct",
+        ])
+        cpu_temp = _first_float(row, [
+            "EG5120_CPU_Temprature",
+            "EG5120_CPU_Temperature",
+            "CPU_temprature",
+            "CPU_temperature",
+            "cpuTemperature",
+        ])
+        ram_usage = _first_float(row, [
+            "EG5120_RAM_usage",
+            "EG5120_RAM_Usage",
+            "RAM_Usage",
+            "RAM_usage",
+            "ram_usage",
+            "ramUsage",
+        ])
+        ram_total = _first_float(row, ["EG5120_RAM_total_mb", "RAM_total_mb", "ram_total_mb"])
+        ram_free = _first_float(row, ["EG5120_RAM_free_mb", "RAM_free_mb", "ram_free_mb"])
+        if ram_usage is None and ram_total and ram_free is not None:
+            ram_usage = ((ram_total - ram_free) / ram_total) * 100
+
+        if cpu_usage is None and cpu_temp is None and ram_usage is None:
+            continue
+
+        cpu_text = (
+            f"CPU usage {cpu_usage:.1f}%"
+            if cpu_usage is not None
+            else f"CPU temperature {cpu_temp:.1f} C"
+            if cpu_temp is not None
+            else "CPU data unavailable"
+        )
+        ram_text = f"RAM usage {ram_usage:.1f}%" if ram_usage is not None else "RAM data unavailable"
+        if ram_total and ram_free is not None:
+            ram_text += f" ({ram_total - ram_free:.0f} MB used of {ram_total:.0f} MB)"
+
+        timestamp = row.get("time") or row.get("timestamp") or "unknown time"
+        lines.append(f"Device {device_id}: {cpu_text}; {ram_text}; last update {timestamp}.")
+        chart_labels.append(f"Device {device_id}")
+        cpu_values.append(cpu_usage if cpu_usage is not None else cpu_temp)
+        ram_values.append(round(ram_usage, 1) if ram_usage is not None else None)
+
+    if not lines:
+        return None
+
+    chart = {
+        "chart_type": "bar",
+        "title": "Edge Device CPU and RAM",
+        "description": "Latest EG5120 resource readings per device. CPU is shown as usage when available, otherwise CPU temperature.",
+        "labels": chart_labels,
+        "datasets": [
+            {
+                "label": "CPU usage (%) or CPU temperature (C)",
+                "data": cpu_values,
+                "backgroundColor": "rgba(239, 68, 68, 0.65)",
+                "borderColor": "rgba(220, 38, 38, 1)",
+            },
+            {
+                "label": "RAM usage (%)",
+                "data": ram_values,
+                "backgroundColor": "rgba(37, 99, 235, 0.65)",
+                "borderColor": "rgba(29, 78, 216, 1)",
+            },
+        ],
+    }
+
+    return {
+        "answer": "Latest Edge device CPU and RAM readings:\n" + "\n".join(f"- {line}" for line in lines),
+        "chart": chart,
+    }
 
 
 def _is_greeting(text: str) -> bool:
@@ -411,6 +726,31 @@ async def crew_chat(
 
     weather_prediction, prediction_confidence = _extract_weather(device_data)
     timeout_seconds = int(os.getenv("CREW_TIMEOUT_SECONDS", "45"))
+
+    if _is_edge_resource_query(effective_query):
+        direct = _query_edge_resources_from_snapshot(device_data)
+        if direct:
+            return {
+                "transcript": transcript,
+                "answer": direct["answer"],
+                "chart": direct.get("chart"),
+                "weather_prediction": weather_prediction,
+                "prediction_confidence": prediction_confidence,
+                "language": lang,
+                "context": context_payload,
+            }
+        return {
+            "transcript": transcript,
+            "answer": (
+                "I could not find Edge device CPU/RAM fields in the latest sensor snapshot. "
+                "Expected fields include EG5120_CPU_Temprature, EG5120_RAM_total_mb, and EG5120_RAM_free_mb."
+            ),
+            "chart": None,
+            "weather_prediction": weather_prediction,
+            "prediction_confidence": prediction_confidence,
+            "language": lang,
+            "context": context_payload,
+        }
 
     # Deterministic temperature analytics directly from InfluxDB.
     if _is_temperature_query(effective_query):

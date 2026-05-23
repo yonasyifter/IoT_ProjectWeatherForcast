@@ -107,6 +107,8 @@
           </div>
         </div>
 
+        <component :is="activeModeGuide" class="ap-mode-guide" />
+
         <!-- Options row -->
         <div class="ap-options-row">
           <!-- Voice input -->
@@ -224,19 +226,10 @@
             </div>
 
             <!-- Chart response -->
-            <div v-if="chartData" class="ap-chart-section">
-              <div class="ap-chart-header">
-                <span class="ap-chart-type-badge">{{ chartData.chart_type }}</span>
-                <h3 class="ap-chart-title">{{ chartData.title }}</h3>
-              </div>
-              <div class="ap-chart-wrap">
-                <canvas ref="chartCanvas" :key="chartKey"></canvas>
-              </div>
-              <p v-if="chartData.description" class="ap-chart-desc">{{ chartData.description }}</p>
-            </div>
+            <DataVisualizationChart v-if="chartData" :chart-data="chartData" />
 
             <!-- Text / LaTeX response -->
-            <div v-if="response.answer" class="ap-answer-block">
+            <div v-if="displayAnswer" class="ap-answer-block">
               <!-- LaTeX formulas detected -->
               <div v-if="hasLatex" class="ap-latex-notice">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -252,10 +245,10 @@
                 <div>
                   <div class="ap-weather-label">Weather Forecast</div>
                   <div class="ap-weather-val">{{ response.weather_prediction }}</div>
-                  <div v-if="response.prediction_confidence" class="ap-weather-conf">
-                    Confidence: {{ Math.round(response.prediction_confidence) }}%
+                  <div v-if="weatherConfidencePercent(response) !== null" class="ap-weather-conf">
+                    Confidence: {{ weatherConfidencePercent(response) }}%
                     <div class="ap-conf-bar">
-                      <div class="ap-conf-fill" :style="{ width: response.prediction_confidence + '%' }"></div>
+                      <div class="ap-conf-fill" :style="{ width: weatherConfidencePercent(response) + '%' }"></div>
                     </div>
                   </div>
                 </div>
@@ -329,6 +322,38 @@
                   </div>
                 </div>
 
+                <div v-if="reportEdgeGauges.length" class="ap-report-gauge-panel">
+                  <div class="ap-report-gauge-title">
+                    <span>Latest Edge Health</span>
+                    <strong>CPU Temperature · RAM · Storage</strong>
+                  </div>
+                  <div class="ap-report-gauge-grid">
+                    <section v-for="device in reportEdgeGauges" :key="device.deviceId" class="ap-report-device-gauges">
+                      <div class="ap-report-device-head">
+                        <h3>Device {{ device.deviceId }}</h3>
+                        <span>{{ device.lastSeen }}</span>
+                      </div>
+                      <div class="ap-report-gauge-row">
+                        <div
+                          v-for="gauge in device.gauges"
+                          :key="gauge.key"
+                          class="ap-report-gauge"
+                          :class="`is-${gauge.tone}`"
+                        >
+                          <div class="ap-report-gauge-ring" :style="{ '--gauge-value': gauge.percent, '--gauge-color': gauge.color }">
+                            <div class="ap-report-gauge-core">
+                              <strong>{{ gauge.value }}</strong>
+                              <span>{{ gauge.unit }}</span>
+                            </div>
+                          </div>
+                          <div class="ap-report-gauge-label">{{ gauge.label }}</div>
+                          <small>{{ gauge.status }}</small>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </div>
+
                 <div class="ap-report-chart-grid">
                   <section v-for="(chart, index) in reportCharts" :key="chart.id" class="ap-report-chart-card">
                     <div class="ap-report-chart-head">
@@ -336,7 +361,12 @@
                       <h3>{{ chart.title }}</h3>
                     </div>
                     <div class="ap-report-chart-wrap">
-                      <canvas :ref="el => assignReportChartCanvas(el, index)" :aria-label="chart.title"></canvas>
+                      <canvas
+                        :ref="el => assignReportChartCanvas(el, index)"
+                        :aria-label="chart.title"
+                        width="640"
+                        height="300"
+                      ></canvas>
                     </div>
                     <p>{{ chart.description }}</p>
                   </section>
@@ -450,6 +480,13 @@ import MathBlock from '@/components/agent/MathBlock.vue'
 import AnomalyBlock from '@/components/agent/AnomalyBlock.vue'
 import ConfidenceMeter from '@/components/agent/ConfidenceMeter.vue'
 import SourceChip from '@/components/agent/SourceChip.vue'
+import ConversationalMode from '@/components/agent/modes/ConversationalMode.vue'
+import StatisticalAnalysisMode from '@/components/agent/modes/StatisticalAnalysisMode.vue'
+import DataVisualizationMode from '@/components/agent/modes/DataVisualizationMode.vue'
+import DeviceHealthMode from '@/components/agent/modes/DeviceHealthMode.vue'
+import AnomalyDetectionMode from '@/components/agent/modes/AnomalyDetectionMode.vue'
+import FullReportMode from '@/components/agent/modes/FullReportMode.vue'
+import DataVisualizationChart from '@/components/agent/modes/DataVisualizationChart.vue'
 
 // ── Language ──────────────────────────────────────────────────────────────
 const lang = ref('en')
@@ -552,6 +589,15 @@ const capabilities = [
 const activeMode    = ref('chat')
 const activeCap     = computed(() => capabilities.find(c => c.id === activeMode.value))
 const defaultExamples = capabilities[0].examples
+const modeGuides = {
+  chat: ConversationalMode,
+  math: StatisticalAnalysisMode,
+  chart: DataVisualizationMode,
+  device: DeviceHealthMode,
+  anomaly: AnomalyDetectionMode,
+  report: FullReportMode,
+}
+const activeModeGuide = computed(() => modeGuides[activeMode.value] || ConversationalMode)
 
 function activateMode (cap) {
   activeMode.value = cap.id
@@ -672,6 +718,17 @@ const chartData      = ref(null)
 const chartCanvas    = ref(null)
 const chartKey       = ref(0)
 let   chartInstance  = null
+const reportCanvasBackground = {
+  id: 'reportCanvasBackground',
+  beforeDraw(chart) {
+    const { ctx, width, height } = chart
+    ctx.save()
+    ctx.globalCompositeOperation = 'destination-over'
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, width, height)
+    ctx.restore()
+  }
+}
 const CHAT_REQUEST_TIMEOUT_MS = 55000
 const REPORT_REQUEST_TIMEOUT_MS = 130000
 const SNAPSHOT_REQUEST_TIMEOUT_MS = 10000
@@ -767,14 +824,24 @@ function buildFinalQuery (raw) {
 }
 
 // ── Sensor context snapshot ───────────────────────────────────────────────
-function minutesForReportWindow () {
-  const q = (userQuery.value || '').toLowerCase()
+function minutesForQuery (query) {
+  const q = (query || '').toLowerCase()
   const selected = timeWindow.value
-  const value = selected || (q.includes('week') ? '7d' : q.includes('24') || q.includes('day') ? '24h' : '24h')
+  const hourMatch = q.match(/last\s+(\d{1,3})\s*(hour|hours|h)\b/)
+  if (!selected && hourMatch) return Math.max(1, Number(hourMatch[1])) * 60
+
+  const dayMatch = q.match(/last\s+(\d{1,3})\s*(day|days|d)\b/)
+  if (!selected && dayMatch) return Math.max(1, Number(dayMatch[1])) * 24 * 60
+
+  const value = selected || (q.includes('week') ? '7d' : q.includes('24') || q.includes('day') ? '24h' : '1h')
   const match = value.match(/^(\d+)([hd])$/)
-  if (!match) return 24 * 60
+  if (!match) return 60
   const amount = Number(match[1])
   return match[2] === 'd' ? amount * 24 * 60 : amount * 60
+}
+
+function minutesForReportWindow () {
+  return minutesForQuery(userQuery.value || '24h')
 }
 
 async function fetchSensorSnapshot (minutes = 60) {
@@ -805,7 +872,8 @@ async function handleSubmit () {
   pushHistory(q, activeMode.value)
 
   try {
-    const snapshot = await fetchSensorSnapshot(activeMode.value === 'report' ? minutesForReportWindow() : 60)
+    const isChartRequest = activeMode.value === 'chart' || requestChart.value
+    const snapshot = await fetchSensorSnapshot(activeMode.value === 'report' || isChartRequest ? minutesForQuery(q) : 60)
     const fd = new FormData()
     fd.append('user_query', q)
     fd.append('language', lang.value)
@@ -823,9 +891,16 @@ async function handleSubmit () {
     } else {
       clearReportState()
       const res = await postWithTimeout('/api/crew/chat', fd)
-      response.value = res
-      if (res.chart?.chart_type) {
-        chartData.value = res.chart
+      const deterministicChart = isChartRequest ? buildSnapshotChart(q, snapshot) : null
+      const normalizedChart = deterministicChart || normalizeChartPayload(res.chart)
+      response.value = {
+        ...res,
+        answer: deterministicChart && (activeMode.value === 'chart' || isInfluxDataWarning(res.answer))
+          ? chartSummaryText(deterministicChart)
+          : res.answer
+      }
+      if (normalizedChart) {
+        chartData.value = normalizedChart
       }
       crewStatus.value = 'ok'
     }
@@ -856,7 +931,8 @@ async function handleAudioSubmit (blob) {
     const res = await postWithTimeout('/api/crew/chat', fd)
     transcript.value = res.transcript || ''
     response.value   = res
-    if (res.chart?.chart_type) chartData.value = res.chart
+    const normalizedChart = normalizeChartPayload(res.chart)
+    if (normalizedChart) chartData.value = normalizedChart
     crewStatus.value = 'ok'
     pushHistory(transcript.value || '(voice)', activeMode.value)
   } catch (e) {
@@ -946,25 +1022,69 @@ function renderTextWithCitations (text) {
   return `<p class="ap-p">${t}</p>`
 }
 
+function stripChartJsonBlocks (text) {
+  if (!text) return ''
+  let cleaned = String(text)
+    .replace(/```(?:json)?\s*[\s\S]*?"chart_type"[\s\S]*?```/gi, '')
+    .replace(/```(?:json)?\s*[\s\S]*?"datasets"[\s\S]*?```/gi, '')
+    .trim()
+
+  if (cleaned.startsWith('{') && cleaned.includes('"chart_type"')) {
+    try {
+      const parsed = JSON.parse(cleaned)
+      if (parsed && typeof parsed === 'object' && parsed.chart_type) {
+        cleaned = parsed.description || parsed.title || ''
+      }
+    } catch {}
+  }
+
+  return cleaned.trim()
+}
+
+function stripLatexDelimiters (text) {
+  if (!text) return ''
+  return String(text)
+    .replace(/\$\$([\s\S]*?)\$\$/g, (_, content) => content.trim())
+    .replace(/\$([^$\n]+?)\$/g, (_, content) => content.trim())
+}
+
+function cleanAgentText (text) {
+  return stripLatexDelimiters(stripChartJsonBlocks(text)).trim()
+}
+
+function isInfluxDataWarning (text) {
+  const value = String(text || '').toLowerCase()
+  return value.includes('could not read') && value.includes('influxdb')
+}
+
+function chartSummaryText (chart) {
+  if (!chart) return ''
+  const title = chart.title || 'Data visualization'
+  const description = chart.description || 'The chart was generated from the latest sensor snapshot.'
+  return `${title}\n${description}`
+}
+
+const displayAnswer = computed(() => cleanAgentText(response.value?.answer || ''))
+
 const renderedAnswer = computed(() => {
-  if (!response.value?.answer) return ''
-  return renderTextWithCitations(response.value.answer)
+  if (!displayAnswer.value) return ''
+  return renderTextWithCitations(displayAnswer.value)
 })
 
 const hasLatex = computed(() => {
-  const a = response.value?.answer || ''
+  const a = displayAnswer.value || ''
   return a.includes('$$') || a.includes('$')
 })
 
 const responseSources = computed(() => {
-  if (!response.value?.answer) return []
-  const matches = [...response.value.answer.matchAll(/\(Source:\s*([^)]+)\)/g)]
+  if (!displayAnswer.value) return []
+  const matches = [...displayAnswer.value.matchAll(/\(Source:\s*([^)]+)\)/g)]
   return [...new Set(matches.map(m => m[1].trim()))]
 })
 
 const renderedReport = computed(() => {
   if (!reportContent.value) return ''
-  let html = reportContent.value
+  let html = stripLatexDelimiters(reportContent.value)
 
   html = html.replace(/```delivery_prompt[\s\S]*?```/g, '')
 
@@ -978,8 +1098,6 @@ const renderedReport = computed(() => {
     .replace(/🔴/g, '<span class="rag red">🔴</span>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/\$\$(.+?)\$\$/gs, (_, m) => `<div class="ap-latex-block"><code class="ap-latex-code">${m.trim()}</code></div>`)
-    .replace(/\$([^$\n]+?)\$/g, (_, m) => `<code class="ap-latex-inline">${m}</code>`)
     .replace(/(\|.+\|\n\|[-| :]+\|\n(?:\|.+\|\n?)+)/g, match => {
       const rows = match.trim().split('\n')
       const header = rows[0].split('|').filter(c => c.trim()).map(c => `<th>${c.trim()}</th>`).join('')
@@ -1004,10 +1122,151 @@ function destroyChart () {
   if (chartInstance) { chartInstance.destroy(); chartInstance = null }
 }
 
+function normalizeChartPayload (raw) {
+  if (!raw || typeof raw !== 'object') return null
+
+  const nested = raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data) ? raw.data : null
+  const chartType = raw.chart_type || raw.type || 'bar'
+  const labels = raw.labels || nested?.labels || []
+  const datasets = raw.datasets || nested?.datasets || null
+  const singleData = Array.isArray(raw.data) ? raw.data : (nested?.data || [])
+
+  const normalized = {
+    chart_type: chartType,
+    title: raw.title || nested?.title || 'Sensor Data',
+    description: raw.description || nested?.description || '',
+    labels,
+    datasets,
+    data: singleData,
+    unit: raw.unit || nested?.unit || ''
+  }
+
+  const hasDatasetData = Array.isArray(datasets)
+    ? datasets.some(ds => Array.isArray(ds.data) && ds.data.some(point => point !== null && point !== undefined))
+    : false
+  const hasSingleData = Array.isArray(singleData) && singleData.some(point => point !== null && point !== undefined)
+
+  return hasDatasetData || hasSingleData ? normalized : null
+}
+
+const CHART_METRICS = {
+  temperature: { unit: 'deg C', color: '#ef4444', value: row => toNumber(row.temperature) },
+  humidity: { unit: '%', color: '#2563eb', value: row => toNumber(row.humidity) },
+  pressure: { unit: 'kPa', color: '#16a34a', value: row => {
+    const value = toNumber(row.pressure)
+    return value === null ? null : value > 1000 ? value / 1000 : value
+  } },
+  noise: { unit: 'dB', color: '#f59e0b', value: row => toNumber(row.noise) },
+  light: { unit: 'lux', color: '#eab308', value: row => toNumber(row.light) },
+  tof: { unit: 'cm', color: '#7c3aed', value: row => toNumber(row.tof) }
+}
+
+function detectChartMetric (query) {
+  const q = query.toLowerCase()
+  return Object.keys(CHART_METRICS).find(metric => q.includes(metric)) || 'temperature'
+}
+
+function detectChartType (query, metricCount = 1) {
+  const q = query.toLowerCase()
+  if (q.includes('pie')) return 'pie'
+  if (q.includes('doughnut') || q.includes('donut')) return 'doughnut'
+  if (q.includes('bar')) return 'bar'
+  if (q.includes('scatter') && !q.includes('trend')) return 'scatter'
+  if (q.includes('compare') && metricCount <= 1) return 'bar'
+  return 'line'
+}
+
+function buildSnapshotChart (query, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null
+
+  const metric = detectChartMetric(query)
+  const metricConfig = CHART_METRICS[metric]
+  const chartType = detectChartType(query)
+  const byDevice = new Map()
+
+  rows.forEach(row => {
+    const value = metricConfig.value(row)
+    if (!row?.device_id || !row?.time || value === null) return
+    const deviceId = String(row.device_id)
+    if (!byDevice.has(deviceId)) byDevice.set(deviceId, [])
+    byDevice.get(deviceId).push({
+      time: row.time,
+      label: new Date(row.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      value
+    })
+  })
+
+  const devices = [...byDevice.keys()].sort((a, b) => a.localeCompare(b))
+  if (!devices.length) return null
+
+  devices.forEach(deviceId => {
+    byDevice.get(deviceId).sort((a, b) => new Date(a.time) - new Date(b.time))
+  })
+
+  const palette = ['#ef4444', '#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#0891b2']
+  const titleMetric = metric.charAt(0).toUpperCase() + metric.slice(1)
+
+  if (chartType === 'pie' || chartType === 'doughnut' || chartType === 'bar') {
+    const latest = devices.map(deviceId => {
+      const points = byDevice.get(deviceId)
+      return points[points.length - 1]
+    })
+    const data = latest.map(point => point.value)
+    if (!data.some(value => value !== null && value !== undefined)) return null
+
+    return {
+      chart_type: chartType,
+      title: `${titleMetric} by Device`,
+      description: `Latest ${metric} values from all available devices.`,
+      labels: devices.map(deviceId => `Device ${deviceId}`),
+      datasets: [{
+        label: `${titleMetric} (${metricConfig.unit})`,
+        data,
+        backgroundColor: devices.map((_, index) => `${palette[index % palette.length]}cc`),
+        borderColor: devices.map((_, index) => palette[index % palette.length]),
+        borderWidth: 2
+      }],
+      unit: metricConfig.unit
+    }
+  }
+
+  const allTimes = [...new Set(rows
+    .filter(row => row?.time)
+    .map(row => row.time))]
+    .sort((a, b) => new Date(a) - new Date(b))
+
+  const labels = allTimes.map(time => new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+  const datasets = devices.map((deviceId, index) => {
+    const pointByTime = new Map(byDevice.get(deviceId).map(point => [point.time, point.value]))
+    return {
+      label: `Device ${deviceId}`,
+      data: allTimes.map(time => pointByTime.get(time) ?? null),
+      borderColor: palette[index % palette.length],
+      backgroundColor: `${palette[index % palette.length]}22`,
+      spanGaps: true,
+      tension: 0.3,
+      pointRadius: 3,
+      pointHoverRadius: 5
+    }
+  }).filter(dataset => dataset.data.some(value => value !== null))
+
+  if (!datasets.length) return null
+
+  return {
+    chart_type: 'line',
+    title: `${titleMetric} Trend - All Devices`,
+    description: `${titleMetric} over the selected time window with one series per device.`,
+    labels,
+    datasets,
+    unit: metricConfig.unit
+  }
+}
+
 async function renderChart (data) {
   destroyChart()
   chartKey.value++
   await nextTick()
+  await new Promise(resolve => requestAnimationFrame(resolve))
   if (!chartCanvas.value) return
 
   const ctx = chartCanvas.value.getContext('2d')
@@ -1025,6 +1284,9 @@ async function renderChart (data) {
         borderWidth: 2,
         tension: 0.35,
         pointRadius: 4,
+        pointBackgroundColor: ds.pointBackgroundColor || ds.borderColor || PALETTE[i % PALETTE.length],
+        pointBorderColor: '#ffffff',
+        spanGaps: ds.spanGaps ?? true,
         fill: type === 'line' ? false : undefined,
         borderRadius: type === 'bar' ? 6 : 0,
       }))
@@ -1036,6 +1298,9 @@ async function renderChart (data) {
         borderWidth: 2,
         tension: 0.35,
         pointRadius: 4,
+        pointBackgroundColor: PALETTE[0],
+        pointBorderColor: '#ffffff',
+        spanGaps: true,
         borderRadius: type === 'bar' ? 6 : 0,
       }]
 
@@ -1044,11 +1309,11 @@ async function renderChart (data) {
     data: { labels: data.labels || [], datasets },
     options: {
       responsive: true,
-      maintainAspectRatio: true,
+      maintainAspectRatio: false,
       plugins: {
         legend: {
           display: true,
-          labels: { color: '#cbd5e1', font: { family: 'JetBrains Mono, monospace', size: 11 } },
+          labels: { color: '#1f2937', font: { family: 'JetBrains Mono, monospace', size: 11 } },
         },
         tooltip: {
           backgroundColor: '#1e293b',
@@ -1060,19 +1325,23 @@ async function renderChart (data) {
       },
       scales: ['pie','doughnut','radar'].includes(type) ? {} : {
         y: {
-          grid: { color: '#1e293b' },
-          ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono, monospace', size: 11 } },
+          title: { display: Boolean(data.unit), text: data.unit || '', color: '#1f2937' },
+          grid: { color: '#e5e7eb' },
+          ticks: { color: '#1f2937', font: { family: 'JetBrains Mono, monospace', size: 11 } },
         },
         x: {
-          grid: { display: false },
-          ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono, monospace', size: 11 } },
+          grid: { color: '#f1f5f9' },
+          ticks: { color: '#1f2937', font: { family: 'JetBrains Mono, monospace', size: 10 }, maxRotation: 45, minRotation: 0 },
         },
       },
     },
+    plugins: [reportCanvasBackground],
   })
 }
 
-watch(chartData, async val => { if (val) await renderChart(val) })
+watch([chartData, loading], async ([val, isLoading]) => {
+  if (val && !isLoading) await renderChart(val)
+}, { flush: 'post' })
 
 // ── Report chart rendering ────────────────────────────────────────────────
 function toNumber (value) {
@@ -1084,6 +1353,28 @@ function formatReportNumber (value, unit = '') {
   const n = toNumber(value)
   if (n === null) return 'N/A'
   return `${n.toFixed(1)}${unit}`
+}
+
+function parseReportStorageMb (value) {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  const text = String(value).trim().toLowerCase()
+  const match = text.match(/(-?\d+(?:\.\d+)?)\s*(tb|gb|mb|kb)?/)
+  if (!match) return null
+  const amount = Number(match[1])
+  if (!Number.isFinite(amount)) return null
+  const unit = match[2] || 'mb'
+  if (unit === 'tb') return amount * 1024 * 1024
+  if (unit === 'gb') return amount * 1024
+  if (unit === 'kb') return amount / 1024
+  return amount
+}
+
+function reportUsageFromTotalFree (total, free) {
+  const totalValue = toNumber(total) ?? parseReportStorageMb(total)
+  const freeValue = toNumber(free) ?? parseReportStorageMb(free)
+  if (!totalValue || freeValue === null) return null
+  return Math.min(100, Math.max(0, ((totalValue - freeValue) / totalValue) * 100))
 }
 
 function latestReadingsByDevice (rows) {
@@ -1098,128 +1389,284 @@ function latestReadingsByDevice (rows) {
   return [...byDevice.values()].sort((a, b) => String(a.device_id).localeCompare(String(b.device_id)))
 }
 
-function trendRows (rows, limit = 24) {
-  return rows
-    .filter(row => row?.time && (toNumber(row.temperature) !== null || toNumber(row.humidity) !== null))
-    .sort((a, b) => new Date(a.time) - new Date(b.time))
-    .slice(-limit)
-}
-
 function hasValues (values, minCount = 1) {
   return values.filter(value => toNumber(value) !== null).length >= minCount
+}
+
+const REPORT_PALETTE = ['#1d4ed8', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2']
+
+const REPORT_METRICS = {
+  temperature: { label: 'Temperature', unit: 'deg C', color: '#dc2626', value: row => toNumber(row.temperature) },
+  humidity: { label: 'Humidity', unit: '%', color: '#1d4ed8', value: row => toNumber(row.humidity) },
+  pressure: {
+    label: 'Pressure',
+    unit: 'kPa',
+    color: '#16a34a',
+    value: row => {
+      const value = toNumber(row.pressure)
+      return value === null ? null : value > 1000 ? value / 1000 : value
+    }
+  },
+  noise: { label: 'Noise', unit: 'dB', color: '#f59e0b', value: row => toNumber(row.noise) },
+  light: { label: 'Light', unit: 'lux', color: '#ca8a04', value: row => toNumber(row.light) },
+  tof: { label: 'ToF Distance', unit: 'cm', color: '#7c3aed', value: row => toNumber(row.tof) },
+}
+
+function sortedDeviceRows(rows) {
+  return [...rows]
+    .filter(row => row?.device_id && row?.time)
+    .sort((a, b) => new Date(a.time) - new Date(b.time))
+}
+
+function reportTimeLabels(rows, maxPoints = 36) {
+  return [...new Set(sortedDeviceRows(rows).map(row => row.time))]
+    .slice(-maxPoints)
+}
+
+function buildTrendChart(rows, metricKey, maxPoints = 36) {
+  const metric = REPORT_METRICS[metricKey]
+  const times = reportTimeLabels(rows, maxPoints)
+  if (!metric || times.length < 2) return null
+
+  const latestTimes = new Set(times)
+  const byDevice = new Map()
+  sortedDeviceRows(rows).forEach(row => {
+    if (!latestTimes.has(row.time)) return
+    const value = metric.value(row)
+    if (value === null) return
+    const deviceId = String(row.device_id)
+    if (!byDevice.has(deviceId)) byDevice.set(deviceId, new Map())
+    byDevice.get(deviceId).set(row.time, value)
+  })
+
+  const datasets = [...byDevice.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([deviceId, values], index) => {
+      const color = REPORT_PALETTE[index % REPORT_PALETTE.length]
+      return {
+        label: `Device ${deviceId}`,
+        data: times.map(time => values.get(time) ?? null),
+        borderColor: color,
+        backgroundColor: `${color}18`,
+        pointBackgroundColor: color,
+        pointBorderColor: '#ffffff',
+        borderWidth: 2.5,
+        pointRadius: 3,
+        pointHoverRadius: 6,
+        tension: 0.35,
+        spanGaps: true,
+        fill: false,
+      }
+    })
+    .filter(dataset => hasValues(dataset.data, 2))
+
+  if (!datasets.length) return null
+
+  return {
+    id: `${metricKey}-trend`,
+    type: 'line',
+    title: `${metric.label} Trend Across Devices`,
+    description: `${metric.label} history for every reporting device in the selected window.`,
+    unit: metric.unit,
+    data: {
+      labels: times.map(time => new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+      datasets,
+    },
+  }
+}
+
+function buildLatestComparisonChart(latest) {
+  const labels = latest.map(row => `Device ${row.device_id}`)
+  const metricKeys = ['temperature', 'humidity', 'pressure', 'noise']
+  const datasets = metricKeys.map((metricKey, index) => {
+    const metric = REPORT_METRICS[metricKey]
+    return {
+      label: `${metric.label} (${metric.unit})`,
+      data: latest.map(row => metric.value(row)),
+      backgroundColor: `${REPORT_PALETTE[index % REPORT_PALETTE.length]}cc`,
+      borderColor: REPORT_PALETTE[index % REPORT_PALETTE.length],
+      borderWidth: 1.5,
+    }
+  }).filter(dataset => hasValues(dataset.data))
+
+  if (!datasets.length) return null
+
+  return {
+    id: 'device-environment-comparison',
+    type: 'bar',
+    title: 'Latest Environmental Profile by Device',
+    description: 'Side-by-side snapshot of current environmental readings for all devices.',
+    data: { labels, datasets },
+  }
+}
+
+function buildDistributionChart(latest) {
+  const metric = REPORT_METRICS.humidity
+  const values = latest.map(row => metric.value(row) ?? 0)
+  if (!values.some(value => value > 0)) return null
+
+  return {
+    id: 'humidity-distribution',
+    type: 'doughnut',
+    title: 'Humidity Distribution',
+    description: 'Relative distribution of latest humidity readings across devices.',
+    data: {
+      labels: latest.map(row => `Device ${row.device_id}`),
+      datasets: [{
+        label: 'Humidity (%)',
+        data: values,
+        backgroundColor: latest.map((_, index) => `${REPORT_PALETTE[index % REPORT_PALETTE.length]}dd`),
+        borderColor: '#ffffff',
+        borderWidth: 3,
+      }],
+    },
+  }
+}
+
+function buildScatterChart(rows) {
+  const grouped = new Map()
+  sortedDeviceRows(rows).forEach(row => {
+    const x = REPORT_METRICS.temperature.value(row)
+    const y = REPORT_METRICS.humidity.value(row)
+    if (x === null || y === null) return
+    const deviceId = String(row.device_id)
+    if (!grouped.has(deviceId)) grouped.set(deviceId, [])
+    grouped.get(deviceId).push({ x, y })
+  })
+
+  const datasets = [...grouped.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([deviceId, points], index) => {
+      const color = REPORT_PALETTE[index % REPORT_PALETTE.length]
+      return {
+        label: `Device ${deviceId}`,
+        data: points.slice(-80),
+        backgroundColor: `${color}cc`,
+        borderColor: color,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+      }
+    })
+    .filter(dataset => dataset.data.length >= 2)
+
+  if (!datasets.length) return null
+
+  return {
+    id: 'temperature-humidity-scatter',
+    type: 'scatter',
+    title: 'Temperature and Humidity Relationship',
+    description: 'Device-level scatter plot showing how humidity varies with temperature.',
+    xTitle: 'Temperature (deg C)',
+    yTitle: 'Humidity (%)',
+    data: { datasets },
+  }
+}
+
+function buildEdgeResourceChart(latest) {
+  const row = latest.find(item =>
+    toNumber(item.EG5120_CPU_Temprature ?? item.cpuTemperature) !== null ||
+    toNumber(item.ramUsage ?? item.EG5120_RAM_Usage) !== null ||
+    toNumber(item.storageUsage ?? item.EG5120_Storage_Usage) !== null
+  )
+  if (!row) return null
+
+  const ramTotal = toNumber(row.EG5120_RAM_total_mb)
+  const ramFree = toNumber(row.EG5120_RAM_free_mb)
+  const ramUsage = toNumber(row.ramUsage ?? row.EG5120_RAM_Usage) ?? (
+    ramTotal && ramFree !== null ? ((ramTotal - ramFree) / ramTotal) * 100 : null
+  )
+  const storageUsage = toNumber(row.storageUsage ?? row.EG5120_Storage_Usage)
+  const values = [
+    toNumber(row.EG5120_CPU_Temprature ?? row.cpuTemperature),
+    ramUsage,
+    storageUsage,
+  ]
+
+  if (!hasValues(values)) return null
+
+  return {
+    id: 'edge-resource-health',
+    type: 'bar',
+    title: 'Edge Resource Health',
+    description: 'CPU temperature plus RAM and storage utilization where gateway fields are available.',
+    data: {
+      labels: ['CPU Temp (deg C)', 'RAM Usage (%)', 'Storage Usage (%)'],
+      datasets: [{
+        label: 'Gateway Resources',
+        data: values,
+        backgroundColor: ['#dc2626cc', '#1d4ed8cc', '#16a34acc'],
+        borderColor: ['#dc2626', '#1d4ed8', '#16a34a'],
+        borderWidth: 2,
+      }],
+    },
+  }
+}
+
+function reportGaugeTone (type, value) {
+  const n = toNumber(value)
+  if (n === null) return { tone: 'muted', color: '#94a3b8', status: 'No data' }
+  if (type === 'cpu') {
+    if (n > 70) return { tone: 'critical', color: '#dc2626', status: 'Critical' }
+    if (n > 45) return { tone: 'warning', color: '#f59e0b', status: 'Warning' }
+    return { tone: 'healthy', color: '#16a34a', status: 'Normal' }
+  }
+  if (n > 90) return { tone: 'critical', color: '#dc2626', status: 'Critical' }
+  if (n > 80) return { tone: 'warning', color: '#f59e0b', status: 'Warning' }
+  return { tone: 'healthy', color: '#16a34a', status: 'Normal' }
+}
+
+function makeReportGauge (key, label, unit, rawValue, percentValue, type) {
+  const value = toNumber(rawValue)
+  const percent = Math.min(100, Math.max(0, toNumber(percentValue) ?? 0))
+  const tone = reportGaugeTone(type, value)
+  return {
+    key,
+    label,
+    unit,
+    value: value === null ? 'N/A' : value.toFixed(1),
+    percent,
+    ...tone,
+  }
+}
+
+function buildReportEdgeGauges (rows) {
+  const latest = latestReadingsByDevice(rows)
+  return latest.map(row => {
+    const cpuTemp = toNumber(row.EG5120_CPU_Temprature ?? row.EG5120_CPU_Temperature ?? row.cpuTemperature)
+    const ramUsage = toNumber(row.ramUsage ?? row.EG5120_RAM_usage ?? row.EG5120_RAM_Usage ?? row.RAM_Usage ?? row.ram_usage) ??
+      reportUsageFromTotalFree(row.EG5120_RAM_total_mb ?? row.RAM_total_mb ?? row.ram_total_mb, row.EG5120_RAM_free_mb ?? row.RAM_free_mb ?? row.ram_free_mb)
+    const storageUsage = toNumber(row.storageUsage ?? row.EG5120_Storage_Usage ?? row.Storage_Usage ?? row.storage_usage) ??
+      reportUsageFromTotalFree(row.EG5120_Storage_total ?? row.Storage_total ?? row.storage_total, row.EG5120_Storage_free ?? row.Storage_free ?? row.storage_free)
+
+    const gauges = [
+      makeReportGauge('cpu-temp', 'CPU Temperature', 'deg C', cpuTemp, cpuTemp === null ? null : (cpuTemp / 80) * 100, 'cpu'),
+      makeReportGauge('ram-usage', 'RAM Usage', '%', ramUsage, ramUsage, 'usage'),
+      makeReportGauge('storage-usage', 'Storage Usage', '%', storageUsage, storageUsage, 'usage'),
+    ].filter(gauge => gauge.value !== 'N/A')
+
+    return {
+      deviceId: row.device_id,
+      lastSeen: row.time ? new Date(row.time).toLocaleString() : 'Latest reading',
+      gauges,
+    }
+  }).filter(device => device.gauges.length)
 }
 
 function buildReportCharts (rows) {
   if (!Array.isArray(rows) || rows.length === 0) return []
 
   const latest = latestReadingsByDevice(rows)
-  const trend = trendRows(rows)
-  const labels = latest.map(row => `Device ${row.device_id}`)
-  const trendLabels = trend.map(row => {
-    const date = new Date(row.time)
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  })
-
-  const charts = []
-
-  const tempTrend = trend.map(row => toNumber(row.temperature))
-  const humidityTrend = trend.map(row => toNumber(row.humidity))
-
-  if (trend.length && (hasValues(tempTrend, 2) || hasValues(humidityTrend, 2))) {
-    charts.push({
-      id: 'temp-humidity-trend',
-      type: 'line',
-      title: 'Temperature and Humidity Trend',
-      description: 'Recent environmental movement across the selected report window.',
-      data: {
-        labels: trendLabels,
-        datasets: [
-          {
-            label: 'Temperature (deg C)',
-            data: tempTrend,
-            borderColor: '#ef4444',
-            backgroundColor: 'rgba(239, 68, 68, 0.14)',
-            tension: 0.35,
-            yAxisID: 'y'
-          },
-          {
-            label: 'Humidity (%)',
-            data: humidityTrend,
-            borderColor: '#38bdf8',
-            backgroundColor: 'rgba(56, 189, 248, 0.14)',
-            tension: 0.35,
-            yAxisID: 'y1'
-          }
-        ]
-      }
-    })
-  }
-
-  if (latest.length) {
-    const comparisonDatasets = [
-      { label: 'Temperature (deg C)', data: latest.map(row => toNumber(row.temperature)), backgroundColor: 'rgba(239, 68, 68, 0.78)' },
-      { label: 'Humidity (%)', data: latest.map(row => toNumber(row.humidity)), backgroundColor: 'rgba(37, 99, 235, 0.78)' },
-      { label: 'Noise (dB)', data: latest.map(row => toNumber(row.noise)), backgroundColor: 'rgba(245, 158, 11, 0.78)' }
-    ].filter(dataset => hasValues(dataset.data))
-
-    if (comparisonDatasets.length) {
-      charts.push({
-      id: 'device-comparison',
-      type: 'bar',
-      title: 'Per-Device Environmental Comparison',
-      description: 'Latest temperature, humidity, and noise readings by device.',
-      data: {
-        labels,
-        datasets: comparisonDatasets
-      }
-      })
-    }
-
-    const humidityShare = latest.map(row => toNumber(row.humidity) ?? 0)
-    if (humidityShare.some(value => value > 0)) {
-      charts.push({
-      id: 'humidity-share',
-      type: 'doughnut',
-      title: 'Humidity Distribution by Device',
-      description: 'Relative share of the latest humidity readings.',
-      data: {
-        labels,
-        datasets: [{
-          label: 'Humidity (%)',
-          data: humidityShare,
-          backgroundColor: ['#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#ea580c', '#0f766e'],
-          borderColor: '#ffffff',
-          borderWidth: 2
-        }]
-      }
-      })
-    }
-
-    const scatterPoints = rows
-      .map(row => ({ x: toNumber(row.temperature), y: toNumber(row.humidity) }))
-      .filter(point => point.x !== null && point.y !== null)
-      .slice(-80)
-
-    if (scatterPoints.length >= 2) {
-      charts.push({
-        id: 'temperature-humidity-scatter',
-        type: 'scatter',
-        title: 'Temperature vs Humidity Correlation',
-        description: 'Scatter plot showing how humidity changes with temperature.',
-        data: {
-          datasets: [{
-            label: 'Sensor samples',
-            data: scatterPoints,
-            backgroundColor: 'rgba(34, 197, 94, 0.78)',
-            borderColor: '#22c55e'
-          }]
-        }
-      })
-    }
-  }
-
-  return charts
+  return [
+    buildTrendChart(rows, 'temperature'),
+    buildTrendChart(rows, 'humidity'),
+    buildTrendChart(rows, 'pressure'),
+    buildLatestComparisonChart(latest),
+    buildDistributionChart(latest),
+    buildScatterChart(rows),
+  ].filter(Boolean)
 }
+
+const reportEdgeGauges = computed(() => buildReportEdgeGauges(reportSnapshot.value))
 
 const reportStats = computed(() => {
   const latest = latestReadingsByDevice(reportSnapshot.value)
@@ -1251,6 +1698,11 @@ function reportChartOptions (chart) {
     responsive: true,
     maintainAspectRatio: false,
     animation: false,
+    elements: {
+      line: { borderJoinStyle: 'round', borderCapStyle: 'round' },
+      point: { hoverBorderWidth: 3 },
+      bar: { borderRadius: 8 },
+    },
     plugins: {
       legend: {
         position: 'bottom',
@@ -1274,8 +1726,8 @@ function reportChartOptions (chart) {
     return {
       ...common,
       scales: {
-        x: { title: { display: true, text: 'Temperature (deg C)', color: '#1d4ed8', font: { family: 'Times New Roman' } }, grid: { color: '#e2e8f0' }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } },
-        y: { title: { display: true, text: 'Humidity (%)', color: '#1d4ed8', font: { family: 'Times New Roman' } }, grid: { color: '#e2e8f0' }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } }
+        x: { title: { display: true, text: chart.xTitle || 'X', color: '#1d4ed8', font: { family: 'Times New Roman' } }, grid: { color: '#e2e8f0' }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } },
+        y: { title: { display: true, text: chart.yTitle || 'Y', color: '#1d4ed8', font: { family: 'Times New Roman' } }, grid: { color: '#e2e8f0' }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } }
       }
     }
   }
@@ -1283,11 +1735,8 @@ function reportChartOptions (chart) {
   return {
     ...common,
     scales: {
-      x: { grid: { display: false }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } },
-      y: { grid: { color: '#e2e8f0' }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } },
-      ...(chart.id === 'temp-humidity-trend' ? {
-        y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#1d4ed8', font: { family: 'Times New Roman' } } }
-      } : {})
+      x: { grid: { display: false }, ticks: { color: '#334155', font: { family: 'Times New Roman' }, maxRotation: 45 } },
+      y: { title: { display: Boolean(chart.unit), text: chart.unit || '', color: '#1d4ed8' }, grid: { color: '#e2e8f0' }, ticks: { color: '#334155', font: { family: 'Times New Roman' } } },
     }
   }
 }
@@ -1295,16 +1744,24 @@ function reportChartOptions (chart) {
 async function renderReportCharts () {
   destroyReportCharts()
   await nextTick()
+  await new Promise(resolve => requestAnimationFrame(resolve))
   reportCharts.value.forEach((chart, index) => {
     const canvas = reportChartCanvases.value[index]
     if (!canvas) return
     reportChartInstances[index] = new Chart(canvas.getContext('2d'), {
       type: chart.type,
       data: chart.data,
-      options: reportChartOptions(chart)
+      options: reportChartOptions(chart),
+      plugins: [reportCanvasBackground]
     })
   })
+  await nextTick()
+  await new Promise(resolve => requestAnimationFrame(resolve))
 }
+
+watch([reportCharts, loading], async ([charts, isLoading]) => {
+  if (charts.length && !isLoading) await renderReportCharts()
+}, { flush: 'post' })
 
 function reportChartImagesHtml () {
   return reportCharts.value.map((chart, index) => {
@@ -1321,6 +1778,28 @@ function reportChartImagesHtml () {
   }).join('')
 }
 
+function reportGaugeHtml () {
+  if (!reportEdgeGauges.value.length) return ''
+  const devices = reportEdgeGauges.value.map(device => {
+    const gauges = device.gauges.map(gauge => `
+      <td class="gauge-cell">
+        <div class="gauge-label">${escapeHtml(gauge.label)}</div>
+        <div class="gauge-value" style="color:${gauge.color}">${escapeHtml(gauge.value)} ${escapeHtml(gauge.unit)}</div>
+        <div class="gauge-bar"><span style="width:${gauge.percent}%;background:${gauge.color}"></span></div>
+        <div class="gauge-status">${escapeHtml(gauge.status)}</div>
+      </td>
+    `).join('')
+    return `
+      <section class="gauge-device">
+        <h2>Device ${escapeHtml(String(device.deviceId))} Edge Health</h2>
+        <p>Latest reading: ${escapeHtml(device.lastSeen)}</p>
+        <table class="gauge-table"><tr>${gauges}</tr></table>
+      </section>
+    `
+  }).join('')
+  return `<div class="gauge-section"><h1>Latest Edge Health Gauges</h1>${devices}</div>`
+}
+
 // ── PDF download ──────────────────────────────────────────────────────────
 async function downloadPDF () {
   downloadingPDF.value = true
@@ -1329,6 +1808,7 @@ async function downloadPDF () {
     const html2canvas = (await import('html2canvas')).default
     const source = reportExportRef.value
     if (!source) throw new Error('Report is not ready for export.')
+    await renderReportCharts()
 
     const originalMaxHeight = source.style.maxHeight
     const originalOverflow = source.style.overflow
@@ -1362,9 +1842,9 @@ async function downloadPDF () {
       pageCanvas.height = Math.min(pageCanvasHeight, canvas.height - renderedHeight)
       const ctx = pageCanvas.getContext('2d')
       ctx.drawImage(canvas, 0, renderedHeight, canvas.width, pageCanvas.height, 0, 0, canvas.width, pageCanvas.height)
-      const pageImg = pageCanvas.toDataURL('image/png', 1)
+      const pageImg = pageCanvas.toDataURL('image/jpeg', 0.92)
       if (page > 0) doc.addPage()
-      doc.addImage(pageImg, 'PNG', margin, margin, imgWidth, (pageCanvas.height * imgWidth) / canvas.width)
+      doc.addImage(pageImg, 'JPEG', margin, margin, imgWidth, (pageCanvas.height * imgWidth) / canvas.width)
       renderedHeight += pageCanvasHeight
       page++
     }
@@ -1376,9 +1856,11 @@ async function downloadPDF () {
 }
 
 async function downloadWord () {
-  downloadingWord.value = true
+    downloadingWord.value = true
   try {
+    await renderReportCharts()
     const chartsHtml = reportChartImagesHtml()
+    const gaugesHtml = reportGaugeHtml()
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Smart Park Report</title>
     <style>
     body{font-family:"Times New Roman",Times,serif;font-size:12pt;margin:2.1cm;background:#ffffff;color:#111827}
@@ -1391,7 +1873,12 @@ async function downloadWord () {
     .visuals{background:#f8fafc;border:1pt solid #bfdbfe;padding:14pt;margin-bottom:18pt}
     .chart-grid{display:block}.chart-card{background:#fff;border:1pt solid #bfdbfe;padding:12pt;margin:12pt 0}
     .chart-card img{width:100%;max-width:640px;display:block;margin:8pt auto}
-    </style></head><body><div class="visuals"><h1>Visual Analytics</h1><div class="chart-grid">${chartsHtml}</div></div>${renderedReport.value}</body></html>`
+    .gauge-section{background:#fff;border:1pt solid #bfdbfe;padding:12pt;margin-bottom:14pt}
+    .gauge-device{margin:10pt 0}.gauge-table{table-layout:fixed}.gauge-cell{width:33%;background:#fff}
+    .gauge-label{font-weight:bold;color:#1d4ed8}.gauge-value{font-size:18pt;font-weight:bold;margin:5pt 0}
+    .gauge-bar{height:10pt;background:#e5e7eb;border-radius:8pt;overflow:hidden}.gauge-bar span{display:block;height:100%}
+    .gauge-status{font-size:10pt;color:#475569;margin-top:4pt}
+    </style></head><body><div class="visuals"><h1>Visual Analytics</h1>${gaugesHtml}<div class="chart-grid">${chartsHtml}</div></div>${renderedReport.value}</body></html>`
     const blob = new Blob([html], { type: 'application/msword;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -1414,6 +1901,13 @@ function weatherIcon (pred) {
   if (p.includes('snow')) return '❄️'
   if (p.includes('fog')) return '🌫️'
   return '🌤️'
+}
+
+function weatherConfidencePercent (payload) {
+  const raw = Number(payload?.prediction_confidence)
+  if (!Number.isFinite(raw)) return null
+  const percent = raw > 0 && raw <= 1 ? raw * 100 : raw
+  return Math.round(Math.min(100, Math.max(0, percent)))
 }
 </script>
 
@@ -1865,9 +2359,11 @@ function weatherIcon (pred) {
 .ap-report-body { padding: 20px 24px; max-height: 60vh; overflow-y: auto; }
 .ap-report-export .ap-report-body { max-height: none; overflow: visible; }
 .ap-report-visuals {
-  padding: 24px;
+  padding: 28px;
   border-bottom: 1px solid #bfdbfe;
-  background: linear-gradient(180deg, #eff6ff, #ffffff);
+  background:
+    linear-gradient(135deg, rgba(29,78,216,0.12), rgba(22,163,74,0.08) 48%, rgba(255,255,255,0.95)),
+    #ffffff;
 }
 .ap-report-hero {
   display: flex;
@@ -1878,14 +2374,16 @@ function weatherIcon (pred) {
 }
 .ap-report-kicker {
   color: #1d4ed8;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 .ap-report-hero h2 {
   color: #111827;
-  font-size: 1.45rem;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 1.9rem;
+  letter-spacing: 0;
   margin: 4px 0 6px;
 }
 .ap-report-hero p {
@@ -1905,7 +2403,8 @@ function weatherIcon (pred) {
   padding: 10px 12px;
   border: 1px solid #bfdbfe;
   border-radius: 8px;
-  background: #ffffff;
+  background: rgba(255,255,255,0.88);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
 }
 .ap-report-stat span {
   display: block;
@@ -1920,18 +2419,143 @@ function weatherIcon (pred) {
   font-size: 1.05rem;
   margin-top: 2px;
 }
+.ap-report-gauge-panel {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.92);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+}
+.ap-report-gauge-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.ap-report-gauge-title span {
+  color: #1d4ed8;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.ap-report-gauge-title strong {
+  color: #111827;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 1.06rem;
+}
+.ap-report-gauge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.ap-report-device-gauges {
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+}
+.ap-report-device-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.ap-report-device-head h3 {
+  margin: 0;
+  color: #111827;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 1rem;
+}
+.ap-report-device-head span {
+  color: #64748b;
+  font-size: 0.68rem;
+  text-align: right;
+}
+.ap-report-gauge-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.ap-report-gauge {
+  text-align: center;
+  min-width: 0;
+}
+.ap-report-gauge-ring {
+  --gauge-value: 0;
+  --gauge-color: #94a3b8;
+  width: 94px;
+  aspect-ratio: 1;
+  margin: 0 auto 8px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at center, #ffffff 0 58%, transparent 59%),
+    conic-gradient(var(--gauge-color) calc(var(--gauge-value) * 1%), #e5e7eb 0);
+  box-shadow: inset 0 0 0 1px #e2e8f0, 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+.ap-report-gauge-core {
+  width: 70px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+}
+.ap-report-gauge-core strong {
+  color: #111827;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.ap-report-gauge-core span {
+  color: #64748b;
+  font-size: 0.62rem;
+  margin-top: 2px;
+}
+.ap-report-gauge-label {
+  color: #1f2937;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.ap-report-gauge small {
+  display: block;
+  color: #64748b;
+  font-size: 0.66rem;
+  margin-top: 2px;
+}
+.ap-report-gauge.is-healthy small { color: #15803d; }
+.ap-report-gauge.is-warning small { color: #b45309; }
+.ap-report-gauge.is-critical small { color: #b91c1c; }
 .ap-report-chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(260px, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 .ap-report-chart-card {
-  min-height: 330px;
-  padding: 16px;
+  min-height: 360px;
+  padding: 18px;
   border: 1px solid #bfdbfe;
   border-radius: 10px;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.1);
+  background:
+    linear-gradient(180deg, rgba(239,246,255,0.74), #ffffff 42%),
+    #ffffff;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.11);
+}
+.ap-report-chart-card:nth-child(3n + 1) {
+  border-top: 4px solid #1d4ed8;
+}
+.ap-report-chart-card:nth-child(3n + 2) {
+  border-top: 4px solid #16a34a;
+}
+.ap-report-chart-card:nth-child(3n + 3) {
+  border-top: 4px solid #f59e0b;
 }
 .ap-report-chart-head {
   display: flex;
@@ -1941,7 +2565,8 @@ function weatherIcon (pred) {
 }
 .ap-report-chart-head h3 {
   color: #111827;
-  font-size: 0.95rem;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 1.08rem;
   margin: 0;
 }
 .ap-report-chart-type {
@@ -1956,7 +2581,7 @@ function weatherIcon (pred) {
   text-transform: uppercase;
 }
 .ap-report-chart-wrap {
-  height: 230px;
+  height: 250px;
   position: relative;
 }
 .ap-report-chart-card p {
@@ -2138,6 +2763,25 @@ function weatherIcon (pred) {
 .ap-inline-source {
   font-size: 0.68rem; color: #4a6180;
   font-family: 'JetBrains Mono', monospace; margin-left: 4px;
+}
+
+.mode-guide {
+  padding: 10px 12px;
+  border: 1px solid rgba(59,130,246,0.22);
+  border-radius: 8px;
+  background: rgba(59,130,246,0.08);
+}
+.mode-guide h3 {
+  margin: 0 0 4px;
+  color: #bfdbfe;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.mode-guide p {
+  margin: 0;
+  color: #8aa4c2;
+  font-size: 0.74rem;
+  line-height: 1.45;
 }
 
 /* Report */

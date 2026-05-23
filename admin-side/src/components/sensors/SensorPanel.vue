@@ -93,13 +93,13 @@ function metricHealth(metric, value) {
   if (n === null) return { color: '#6c757d', label: 'No data' }
 
   if (metric === 'cpu') {
-    if (n > 80) return { color: '#dc3545', label: 'Critical' }
-    if (n > 50) return { color: '#ffc107', label: 'Warning' }
+    if (n > 70) return { color: '#dc3545', label: 'Critical' }
+    if (n > 45) return { color: '#ffc107', label: 'Warning' }
     return { color: '#20c997', label: 'Healthy' }
   }
 
   if (n > 90) return { color: '#dc3545', label: 'Critical' }
-  if (n > 70) return { color: '#ffc107', label: 'Warning' }
+  if (n > 80) return { color: '#ffc107', label: 'Warning' }
   return { color: '#20c997', label: 'Healthy' }
 }
 
