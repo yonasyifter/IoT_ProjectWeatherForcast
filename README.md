@@ -1,488 +1,367 @@
-<
-#  Gigantic della Silla National Park IoT Environmental Monitoring
+# Smart Park IoT + AI Dashboard
 
-### Environmental Monitoring System for **I Giganti della Sila – Riserva Naturale Biogenetica di Fallistro**
+Environmental monitoring and device-management platform for a smart park deployment at
+I Giganti della Sila / Riserva Naturale Biogenetica di Fallistro.
 
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)
-![Vue.js](https://img.shields.io/badge/Vue.js-4FC08D?style=flat&logo=vuedotjs&logoColor=white)
+![Vue.js](https://img.shields.io/badge/Vue.js-3-4FC08D?style=flat&logo=vuedotjs&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-7-646CFF?style=flat&logo=vite&logoColor=white)
 ![InfluxDB](https://img.shields.io/badge/InfluxDB-22ADF6?style=flat&logo=influxdb&logoColor=white)
 ![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=flat&logo=firebase&logoColor=black)
-![Nginx](https://img.shields.io/badge/Nginx-009639?style=flat&logo=nginx&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat&logo=nodedotjs&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)
 
----
+## Overview
 
-SmartPark IoT is a full-stack Internet of Things (IoT) system developed as part of an **IoT university course project**. The system focuses on **real-time environmental monitoring** and **visitor support** for **I Giganti della Sila – Riserva Naturale Biogenetica di Fallistro**, a protected ancient forest located in **Sila National Park**, Calabria, Italy.
+This repository contains a FastAPI backend and a Vue 3 admin dashboard for monitoring smart-park sensor data, Robustel RCMS devices, weather conditions, and AI-generated operational reports.
 
-The reserve contains **58 monumental Laricio pine trees (*Pinus nigra* subsp. *laricio*)**, some over **350 years old** and reaching heights of **up to 45 metres**. The area is managed by **FAI – Fondo Ambiente Italiano** and represents one of the most ecologically significant forest ecosystems in southern Italy.
+The system is built around:
 
-The platform integrates **IoT sensing devices, environmental data collection, backend services, a visitor-facing web application**, and an **administrative monitoring dashboard**.
+- Environmental telemetry stored in InfluxDB.
+- Firebase-backed authentication and project data.
+- A Vue admin dashboard for sensor maps, charts, RCMS devices, alerts, GPS tracking, and AI-agent tools.
+- A FastAPI backend exposing weather, auth, RAG, Crew/AI, and RCMS proxy endpoints.
+- Robustel EG5120 / S6000U field hardware integration.
+- Optional report delivery through SMTP email and WhatsApp providers.
 
----
+## Current Repository Structure
 
-## 📋 Table of Contents
-
-- [Project Overview](#-project-overview)
-- [System Architecture](#-system-architecture)
-- [Repository Structure](#-repository-structure)
-- [Technology Stack](#-technology-stack)
-- [Prerequisites](#-prerequisites)
-- [Getting Started](#-getting-started)
-- [Environment Variables](#-environment-variables)
-- [Services & Ports](#-services--ports)
-- [Project Modules](#-project-modules)
-- [API Reference](#-api-reference)
-- [Project Contributions](#-project-contributions)
-- [Troubleshooting](#-troubleshooting)
-- [License](#-license)
-- [About the Reserve](#-about-the-reserve)
-
----
-
-## 🌍 Project Overview
-
-The SmartPark IoT platform collects **environmental and meteorological data from IoT sensors deployed across the reserve**. Sensor readings are ingested by a backend API, stored in a time-series database, and made accessible through two dedicated interfaces.
-
-### Key Features
-
-- 📡 **Real-time sensor data ingestion** from IoT devices deployed in the field
-- 🌡️ **Environmental monitoring** — temperature, humidity, air quality, and weather conditions
-- 🗺️ **Trail recommendations** based on live weather data and visitor preferences
-- 🔐 **User authentication** via Firebase for personalised visitor experience
-- 📊 **Administrative dashboard** for park staff to monitor system and sensor status
-- 📈 **Time-series visualisation** via Grafana for historical data analysis
-
----
-
-## 🏗 System Architecture
-
-The system follows a **two-tier architecture**: an **Edge Tier** (sensors and gateway with on-device ML inference),and a **Cloud Tier** (remote management, cloud sync, and web applications).
-
-```
-╔══════════════════════════════════════════════════════════════╗
-║                        EDGE TIER                             ║
-║                                                              ║
-║   S6000U Sensor  ──(Modbus RTU / RS485)──►  Robustel EG5120 ║
-║   (Temp, Humidity, Pressure, Light,          │               ║
-║    Noise, ToF, GPS)                          │ App Center    ║
-║                                              ├─ Node-RED     ║
-║                                              │   (orchestration,║
-║                                              │    Modbus poll,  ║
-║                                              │    GPS parsing,  ║
-║                                              │    ML exec)      ║
-║                                              ├─ InfluxDB     ║
-║                                              │   (local time-║
-║                                              │    series DB) ║
-║                                              ├─ Grafana      ║
-║                                              │   (on-device  ║
-║                                              │    dashboard) ║
-║                                              └─ 
-╚══════════════════════════════╤═══════════════════════════════╝
-                               │ HTTPS / 4G-5G Cellular
-╔══════════════════════════════▼═══════════════════════════════╗
-║                        CLOUD TIER                            ║
-║                                                              ║
-║  ┌─────────────────┐        ┌──────────────────────────┐    ║
-║  │  InfluxDB Cloud │        │  Firebase Firestore       │    ║
-║  │  (AWS region)   │        │  - User auth & prefs      │    ║
-║  │  Long-term      │        │  - Trail tags & metadata  │    ║
-║  │  telemetry      │        │  - Recommendations        │    ║
-║  └────────┬────────┘        └──────────┬───────────────┘    ║
-║           │                            │                     ║
-║           ▼                            ▼                     ║
-║  ┌──────────────────────────────────────────────────────┐    ║
-║  │               FastAPI Backend                        │    ║
-║  │  - Data ingestion & validation                       │    ║
-║  │  - REST endpoints for both frontends                 │    ║
-║  └──────────────┬───────────────────────────────────────┘    ║
-║                 │                                            ║
-║      ┌──────────┴──────────┐                                 ║
-║      ▼                     ▼                                 ║
-║  ┌───────────────┐   ┌──────────────────────────────────┐   ║
-║  │ Admin Dashboard│   │     Visitor Web Application       │   ║
-║  │ (Vue.js 3)    │   │     (HTML5 / CSS3 / Vanilla JS)   │   ║
-║  │               │   │                                   │   ║
-║  │ - Station map │   │  - Weather dashboard              │   ║
-║  │ - Live sensor │   │  - Interactive map (Leaflet.js)   │   ║
-║  │   readings    │   │  - Firebase Auth                  │   ║
-║  │ - Historical  │   │  - Trail recommendations (CBF)    │   ║
-║  │   trends      │   │  
-║  │ - RAG Chatbot │   │                                   │   ║
-║  └───────────────┘   └──────────────┬────────────────────┘   ║
-║                                     │                        ║
-║                             ┌───────▼──────────┐            ║
-║                             │  ML Engine        │            ║
-║                             │  (Node.js/Express)│            ║
-║                             │  Content-Based    │            ║
-║                             │  Filtering (CBF)  │            ║
-║                             └───────────────────┘            ║
-╚══════════════════════════════════════════════════════════════╝
+```text
+ProjectX_web/
+├── admin-side/                  # Vue 3 + Vite admin dashboard
+│   ├── src/
+│   │   ├── pages/               # Sensor, weather, AI, RCMS, docs/help pages
+│   │   ├── components/          # Shared Vue components
+│   │   ├── services/            # API clients, including RCMS proxy client
+│   │   └── utils/               # Auth, Firebase, API helpers
+│   ├── package.json
+│   └── vite.config.js
+├── backend/                     # FastAPI backend
+│   ├── app/
+│   │   ├── main.py              # FastAPI application entry point
+│   │   ├── routes/              # auth, weather, crew, rag, rcms routes
+│   │   ├── config.py            # Environment configuration
+│   │   ├── database.py          # Firebase initialization
+│   │   └── influx.py            # InfluxDB helpers
+│   ├── crew/                    # AI/Crew support code
+│   ├── requirements.txt
+│   └── .env                     # Local backend configuration, not for git
+├── backend.Dockerfile
+├── frontend.Dockerfile
+├── compose.yaml
+├── nginx.conf
+└── README.md
 ```
 
-### Architecture Layers
+## Features
 
-**1. Hardware Layer** — The Robustel EG5120 (ARM Cortex-A7, 512 MB RAM, 4G LTE) acts as the central edge computing hub. The S6000U multi-purpose sensor connects via RS485/Modbus RTU and measures temperature, humidity, pressure, light, noise, ToF distance, and orientation.
+- Live sensor dashboard with device cards, maps, current readings, and health gauges.
+- Historical chart pages for temperature, humidity, pressure, sound, prediction-time distribution, and other telemetry.
+- RCMS dashboard, device management, GPS tracking, alerts, and remote action pages.
+- AI-agent page with conversational Q&A, statistical analysis, visualization, device health, anomaly detection, and full-report generation.
+- Report export to PDF/DOC-style documents, with optional delivery by email or WhatsApp.
+- Firebase authentication for admin access.
+- InfluxDB-backed environmental data queries.
 
-**2. Edge Processing Layer** — Node-RED runs on the EG5120 and orchestrates the entire local pipeline: it polls the S6000U every 60 seconds via Modbus, parses GPS NMEA sentences, runs the Random Forest predictor (`predictor.py`) via an exec node, fuses sensor + GPS + ML results, writes to local InfluxDB, and syncs to the cloud.
+## Technology Stack
 
-**3. ML Inference (Edge)** — A Random Forest multi-label classifier trained on one year of historical weather data from Open-Meteo classifies current conditions into "Weather Vibe" categories (Frosty, Brisk, Crisp, Moody, Serene, Sun-Drenched). The model runs directly on the EG5120 and pushes trail tags to Firebase Firestore.
+| Area | Technology |
+| --- | --- |
+| Frontend | Vue 3, Vite, Bootstrap, Bootstrap Icons, Leaflet, Chart.js, ECharts |
+| Backend | FastAPI, Uvicorn, Pydantic, ORJSON |
+| Data | InfluxDB Cloud/local InfluxDB, Firebase Admin SDK |
+| AI | Groq, LiteLLM, OpenRouter, CrewAI support code |
+| Device management | Robustel RCMS OpenAPI via backend HMAC proxy |
+| Export/delivery | jsPDF/html2canvas frontend export, SMTP, WhatsApp provider integrations |
+| Deployment | Docker, Docker Compose, Nginx |
 
-**4. Storage Layer** — Local InfluxDB on the gateway provides edge buffering. InfluxDB Cloud (AWS) stores long-term telemetry. Firebase Firestore holds user data, trail metadata, and recommendation outputs.
+## Prerequisites
 
-**5. Application Layer** — The FastAPI backend serves both frontends, handles data ingestion, and integrates a RAG-based AI chatbot (Groq API + Llama-3.3-70b + ChromaDB + LangChain). The Visitor Web App and Admin Dashboard consume these services. Trail recommendations are generated by a dedicated Node.js/Express CBF engine.
+For local development:
 
----
+- Python 3.11+
+- Node.js 20.19+ or 22.12+
+- npm
+- Docker and Docker Compose, if running the containerized stack
 
-## 📂 Repository Structure
+## Local Development
 
-```
-smart-park-iot/
-│
-├── Dockerfile                        # Root Dockerfile
-├── compose.yaml                      # Main Docker Compose configuration
-├── compose.debug.yaml                # Debug/development Compose override
-├── nginx.conf                        # Nginx reverse proxy configuration
-│
-├── IoT_ProjectWeatherForcast/
-│   ├── app/                          # FastAPI backend application
-│   │   ├── main.py                   # Application entry point
-│   │   ├── routers/                  # API route handlers
-│   │   ├── models/                   # Data models / schemas
-│   │   ├── services/                 # Business logic layer
-│   │   └── database/                 # InfluxDB client & queries
-│   ├── weather/                      # Admin dashboard (Vue.js)
-│   │   ├── src/
-│   │   │   ├── components/           # Reusable Vue components
-│   │   │   ├── views/                # Page-level views
-│   │   │   └── stores/               # State management (Pinia)
-│   │   └── vite.config.js
-│   ├── Robustel EG5120/              # IoT gateway configuration files
-│   ├── Robustel EG5120 ML/           # Gateway ML integration config
-│   ├── requirements.txt              # Python dependencies
-│   └── .env.example                  # Environment variable template
-│
-├── web-app/                          # Visitor-facing web application
-│   ├── index.html
-│   ├── assets/
-│   ├── public/
-│   └── src/
-│
-├── ml-engines/                       # Machine learning recommendation engine
-│   ├── generate_recom.js.js
-│   ├── server.js
-│   └── package.json
-│
-├── firebase-config/                  # Firebase project configuration
-├── database/                         # Database schemas and seed data
-└── docs/                             # Project documentation and diagrams
-```
-
----
-
-## ⚙️ Technology Stack
-
-| Layer                      | Technology                                          | Purpose                                           |
-| -------------------------- | --------------------------------------------------- | ------------------------------------------------- |
-| IoT Sensor                 | Robustel S6000U (RS485 / Modbus RTU)                | Multi-parameter environmental sensing             |
-| IoT Gateway                | Robustel EG5120 (ARM Cortex-A7, 4G LTE, GPS)       | Edge computing hub; data acquisition & forwarding |
-| Edge Orchestration         | Node-RED (on EG5120 App Center)                     | Modbus polling, GPS parsing, ML exec, cloud sync  |
-| Edge ML Inference          | Python 3, scikit-learn Random Forest, joblib        | Weather Vibe classification at the edge           |
-| Edge Monitoring            | Grafana + InfluxDB (on EG5120)                      | Local real-time dashboards and data buffering     |
-| Backend API                | Python 3.11+, FastAPI, Uvicorn                      | Data ingestion, REST API, RAG chatbot             |
-| Trail Recommendation       | Node.js 18+, Express, Content-Based Filtering (CBF) | Personalised trail ranking from user preferences  |
-| Visitor Web Application    | HTML5, CSS3 (Bootstrap 5), Vanilla JS, Leaflet.js   | Visitor-facing UI: weather, map, recommendations  |
-| Admin Dashboard            | Vue.js 3, Vite, Pinia                               | SPA for park administrators                       |
-| Cloud Time-Series DB       | InfluxDB Cloud (AWS)                                | Long-term telemetry storage and analytics         |
-| User Data & Sync           | Firebase Firestore + Firebase Authentication        | User profiles, trail tags, recommendations        |
-| Infrastructure             | Docker, Docker Compose, Nginx                       | Containerisation, routing, static file serving    |
-| Remote Device Management   | Robustel RCMS                                       | OTA updates, remote Node-RED deploy, diagnostics  |
-
----
-
-## 🛠 Prerequisites
-
-Before running the project, ensure the following tools are installed on your machine:
-
-| Tool               | Minimum Version | Installation                          |
-| ------------------ | --------------- | ------------------------------------- |
-| Docker             | 24.x            | https://docs.docker.com/get-docker/   |
-| Docker Compose     | 2.x (plugin)    | Included with Docker Desktop          |
-| Git                | 2.x             | https://git-scm.com/                  |
----
-
-## 🚀 Getting Started
-
-### 1. Clone the repository
+### 1. Clone and enter the project
 
 ```bash
-git clone https://github.com/jhenals/smart-park-iot.git
-cd smart-park-iot
+git clone <repository-url>
+cd ProjectX_web
 ```
 
----
+### 2. Configure the backend
 
-### 2. Configure environment variables
+Create or update `backend/.env`.
 
-Copy the environment variable template and fill in the required values:
+Minimum commonly used variables:
+
+```env
+# InfluxDB
+INFLUXDB_URL=https://your-influxdb-url
+INFLUXDB_TOKEN=your-token
+INFLUXDB_ORG=your-org
+INFLUXDB_BUCKET=your-bucket
+INFLUXDB_MEASUREMENT=your-measurement
+
+# Firebase Admin
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_PRIVATE_KEY_ID=your-private-key-id
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-...@your-project.iam.gserviceaccount.com
+FIREBASE_CLIENT_ID=your-client-id
+FIREBASE_CERT_URL=https://www.googleapis.com/robot/v1/metadata/x509/...
+FIREBASE_CREDENTIALS_PATH=/absolute/path/to/service-account.json
+
+# LLM providers. Set at least one.
+GROQ_API_KEY=your-groq-key
+GROQ_MODEL_ID=groq/llama-3.3-70b-versatile
+OPENROUTER_API_KEY=your-openrouter-key
+OPENROUTER_MODEL_ID=openrouter/meta-llama/llama-3.3-70b-instruct
+
+# RCMS proxy
+RCMS_BASE=https://rcms-cloud.robustel.net
+RCMS_CLIENT_ID=your-rcms-client-id
+RCMS_CLIENT_SECRET=your-rcms-client-secret
+
+# Report delivery, optional
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=your-user
+SMTP_PASSWORD=your-password
+SMTP_FROM=reports@example.com
+SMTP_TLS=true
+SMTP_SSL=false
+WHATSAPP_ACCESS_TOKEN=your-token
+WHATSAPP_PHONE_NUMBER_ID=your-phone-number-id
+
+# CORS for local frontend
+ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+```
+
+Do not commit `.env`, Firebase service-account JSON files, API keys, SMTP credentials, or RCMS secrets.
+
+### 3. Run the backend
 
 ```bash
-cp IoT_ProjectWeatherForcast/.env.example IoT_ProjectWeatherForcast/.env
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Open `.env` in your editor and configure the values. See the [Environment Variables](#-environment-variables) section for a full description of each variable.
+Backend URLs:
 
----
+- API docs / Swagger UI: `http://localhost:8000/`
+- ReDoc: `http://localhost:8000/redoc`
+- Health check: `http://localhost:8000/health`
 
-### 3. Build and start all services
+### 4. Run the frontend
+
+In another terminal:
+
+```bash
+cd admin-side
+npm install
+npm run dev
+```
+
+Frontend URL:
+
+- Vite dev server: `http://localhost:5173`
+
+The frontend calls `/api/...` endpoints. In development, ensure the Vite proxy or `VITE_BACKEND_URL` points to the FastAPI backend if your local setup does not already proxy requests.
+
+## Docker Compose
+
+Build and run the production-style stack:
 
 ```bash
 docker compose up --build
 ```
 
-To run in detached (background) mode:
+Run in the background:
 
 ```bash
 docker compose up --build -d
 ```
 
-The first build may take several minutes as Docker pulls base images and installs dependencies.
-
----
-
-### 4. Verify services are running
-
-```bash
-docker compose ps
-```
-
-All services should show a status of `running`. If any service has exited, check its logs:
-
-```bash
-docker compose logs <service-name>
-```
-
----
-
-### 5. Access the applications
-
-| Service                 | URL                           |
-| ----------------------- | ----------------------------- |
-| Visitor Web Application | http://localhost:8081         |
-| FastAPI Backend         | http://localhost:8000         |
-| Admin Dashboard         | http://localhost:5173         |
-| InfluxDB            | http://localhost:8086         |
-| Grafana Dashboard       | http://localhost:3001         |
-
----
-
-### 6. Stop the system
+Stop services:
 
 ```bash
 docker compose down
 ```
 
-To also remove all volumes (database data will be lost):
+Current `compose.yaml` exposes:
+
+| Service | URL |
+| --- | --- |
+| Admin dashboard, Nginx production build | `http://localhost` |
+| FastAPI backend | `http://localhost:8000` |
+| API docs / Swagger UI | `http://localhost:8000/` |
+| ReDoc | `http://localhost:8000/redoc` |
+| Health check | `http://localhost:8000/health` |
+
+Note: the Compose file currently passes only a small environment set to the backend container. For a real deployment, provide the backend variables through an `env_file`, container secrets, or the cloud runtime environment.
+
+## Main API Routes
+
+The backend registers these route groups:
+
+| Route group | Purpose |
+| --- | --- |
+| Auth routes | Admin/session authentication |
+| `/api/weather` | Weather, forecast, and sensor telemetry queries |
+| `/api/crew` | AI-agent requests, reports, report delivery |
+| `/api/rcms` | Robustel RCMS OpenAPI proxy |
+| `/api/rag` | RAG assistant endpoints |
+| `/health` | Backend health check |
+
+Example:
 
 ```bash
-docker compose down -v
+curl "http://localhost:8000/api/weather/forecast/?minutes=60&measurement=Sensor_S6000U_data_GSP2"
 ```
 
----
+## RCMS Notes
 
-## 🔐 Environment Variables
+RCMS calls are signed server-side by `backend/app/routes/rcms.py`. The frontend must not hold the RCMS HMAC secret.
 
-The following variables must be set in `IoT_ProjectWeatherForcast/.env`:
+Important details discovered during integration:
 
-| Variable                   | Description                                           | Example                        |
-| -------------------------- | ----------------------------------------------------- | ------------------------------ |
-| `INFLUXDB_URL`             | URL of the InfluxDB instance                          | `http://influxdb:8086`         |
-| `INFLUXDB_TOKEN`           | InfluxDB authentication token                         | `your-influxdb-token`          |
-| `INFLUXDB_ORG`             | InfluxDB organisation name                            | `smartpark`                    |
-| `INFLUXDB_BUCKET`          | InfluxDB bucket for sensor data                       | `sensor_data`                  |
-| `FIREBASE_PROJECT_ID`      | Firebase project ID                                   | `smartpark-iot`                |
-| `FIREBASE_CREDENTIALS`     | Path to Firebase service account JSON                 | `./firebase-config/key.json`   |
-| `GRAFANA_ADMIN_USER`       | Grafana admin username                                | `admin`                        |
-| `GRAFANA_ADMIN_PASSWORD`   | Grafana admin password                                | `changeme`                     |
+- Device registration uses `/api/gm/devices`.
+- RCMS device area must be sent as a code such as `EUR`, `EA`, `EA2`, `NA`, `SA`, or `AU`.
+- Device list status may arrive as `onlineStatus`; older UI code may refer to `deviceOnLineStatus`.
+- GPS history may arrive as `latitude`, `longitude`, and `timestamp`, so the frontend normalizes these fields before rendering.
+- Alert endpoints can validly return an empty `data: []` even when the endpoint is working.
 
-> ⚠️ Never commit the `.env` file or any Firebase credentials to version control.
+## Frontend Pages
 
----
+The admin dashboard includes:
 
-## 🔧 Services
+- Sensor dashboard
+- Weather page
+- Side navigation pages for grid/map/chart views
+- AI Agent page
+- RCMS dashboard
+- RCMS alerts
+- RCMS GPS tracking
+- RCMS device management
+- Documentation and help pages
 
-The system is composed of several containerised services managed through **Docker Compose**:
+## Build and Verification
 
-| Service         | Container Name    | Description                                       |
-| --------------- | ----------------- | ------------------------------------------------- |
-| `webapp`        | smartpark-webapp  | Visitor-facing web application served by Nginx    |
-| `fastapi`       | smartpark-api     | Backend API for data ingestion and REST endpoints |
-| `adminfrontend` | smartpark-admin   | Vue.js administrative dashboard                   |
-| `mlengine`      | smartpark-ml      | Node.js trail recommendation engine               |
-| `influxdb`      | smartpark-influx  | Time-series database storing sensor telemetry     |
-| `grafana`       | smartpark-grafana | Monitoring dashboards and data visualisation      |
-
----
-
-## 🧩 Project Modules
-
-### Visitor Web Application (`web-app/`)
-
-A lightweight, static web interface designed for park visitors. It provides:
-
-- **Environmental conditions panel** — live temperature, humidity, and air quality readings retrieved from the backend API
-- **Weather information** — current and forecast data relevant to the reserve
-- **Trail recommendation system** — suggests trails based on current weather conditions and visitor-selected preferences
-- **User authentication** — visitors can log in via Firebase to save preferences and view personalised suggestions
-
-The application is served by Nginx and is intentionally lightweight to ensure fast load times, even on mobile networks.
-
----
-
-### Backend API (`IoT_ProjectWeatherForcast/app/`)
-
-A **FastAPI-based REST API** responsible for:
-
-- Receiving and validating data from IoT sensors and the Robustel EG5120 gateway
-- Writing telemetry to InfluxDB using the InfluxDB Python client
-- Exposing REST endpoints consumed by both the visitor web app and the admin dashboard
-- Providing automatic interactive API documentation at `/docs` (Swagger UI) and `/redoc` (ReDoc)
-
----
-
-### Admin Dashboard (`IoT_ProjectWeatherForcast/weather/`)
-
-A **Vue.js 3 single-page application** providing park administrators with:
-
-- Real-time and historical sensor data visualisation
-- System health and connectivity status for each IoT device
-- Chart-based exploration of environmental trends over time
-
----
-
-### Machine Learning Engine (`ml-engines/`)
-
-A **Node.js module** that:
-
-- Analyses current and forecast weather data retrieved from the backend
-- Combines environmental data with visitor-submitted preferences (duration, difficulty, accessibility)
-- Produces ranked trail recommendations returned to the visitor web application
-
----
-
-### IoT Gateway (Robustel EG5120)
-
-The **Robustel EG5120** acts as an industrial-grade cellular IoT gateway deployed in the field. It aggregates data from connected environmental sensors and forwards readings to the backend over the mobile network. The `Robustel EG5120 ML/` directory contains additional configuration for edge-side ML pre-processing.
-
----
-
-## 📖 API Reference
-
-The FastAPI backend automatically generates interactive documentation. Once the system is running, visit:
-
-- **Swagger UI** → http://localhost:8000/docs
-- **ReDoc** → http://localhost:8000/redoc
-
-### Key Endpoints (overview)
-
-| Method | Endpoint                  | Description                             |
-| ------ | ------------------------- | --------------------------------------- |
-| GET    | `/api/weather/forecast/?minutes={minutes}&measurement={name}`            | minutes={minutes}&measurement={name}Retrieve sensor data for the specified time window and measurement           |
-
-
-> Full request/response schemas are available in the interactive documentation.
-
----
-
-## 👥 Project Contributions
-
-This project was developed as a **group assignment for a university IoT course**. The system was built collaboratively, with team members contributing to different components of the stack.
-
-**Group contributions covered:**
-
-- IoT device configuration and gateway setup (Robustel EG5120)
-- FastAPI backend development and InfluxDB integration
-- Admin dashboard (Vue.js)
-- System integration, Docker Compose orchestration, and deployment
-
-**My individual contribution** focused on the **visitor-facing layer** of the system:
-
-- Designed and implemented the **visitor web application** (HTML, CSS, JavaScript)
-- Integrated the web interface with the FastAPI backend to display live environmental data
-- Connected the application to the **ML engine** for trail recommendations
-- Integrated **Firebase Authentication** for user login and personalised experience
-- Modified and adapted existing backend endpoints where necessary to meet frontend requirements
-- Contributed to **system integration testing** across the full stack
-
-> Parts of the backend and infrastructure in this repository originate from the original group project and have been adapted where needed to support the web application integration.
-
----
-
-## 🐛 Troubleshooting
-
-### A service fails to start
-
-Check the logs for that specific service:
+Frontend production build:
 
 ```bash
-docker compose logs fastapi
-docker compose logs influxdb
+cd admin-side
+npm run build
 ```
 
-### InfluxDB connection errors
+Backend syntax check:
 
-Ensure the `INFLUXDB_TOKEN`, `INFLUXDB_ORG`, and `INFLUXDB_BUCKET` values in your `.env` file match the values used when InfluxDB was initialised. If running for the first time, InfluxDB may take a few seconds to become ready — the backend will retry automatically.
+```bash
+python3 -m py_compile backend/app/main.py backend/app/routes/*.py
+```
 
-### Port conflicts
+Health check after starting the backend:
 
-If a port is already in use on your machine, edit `compose.yaml` and change the host-side port mapping. For example, to change the web app from port `8081` to `9081`:
+```bash
+curl http://localhost:8000/health
+```
+
+## Troubleshooting
+
+### Frontend cannot reach the backend
+
+Check the backend:
+
+```bash
+curl http://localhost:8000/health
+```
+
+If using local Vite development, make sure `ALLOWED_ORIGINS` includes `http://localhost:5173` and that the frontend is using the correct backend URL or proxy.
+
+### InfluxDB errors
+
+Verify these variables in `backend/.env`:
+
+- `INFLUXDB_URL`
+- `INFLUXDB_TOKEN`
+- `INFLUXDB_ORG`
+- `INFLUXDB_BUCKET`
+- `INFLUXDB_MEASUREMENT`
+
+Also confirm that the configured measurement matches the data written by the gateway.
+
+### Firebase private key errors
+
+Firebase private keys often need escaped newlines when stored in `.env`:
+
+```env
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+```
+
+Alternatively set `FIREBASE_CREDENTIALS_PATH` to an absolute path for a service-account JSON file.
+
+### RCMS device registration fails
+
+Confirm:
+
+- `RCMS_CLIENT_ID` and `RCMS_CLIENT_SECRET` are configured in the backend environment.
+- The SN and IMEI/MAC belong to the same Robustel device.
+- The selected model exactly matches RCMS's model list.
+- The area sent to RCMS is a code, for example `EUR`, not the label `Europe`.
+- The device is not already bound to another RCMS account.
+
+### Report delivery is not working
+
+For email delivery, configure:
+
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
+
+For WhatsApp delivery, configure the provider credentials required by the backend delivery route.
+
+### Docker port conflicts
+
+Edit `compose.yaml` and change the host-side port mapping. For example:
 
 ```yaml
 ports:
-  - "9081:80"
+  - "8080:80"
 ```
 
-### Admin dashboard not loading
-
-The admin dashboard (`adminfrontend`) runs a Vite development server. If it is slow to start, wait 15–20 seconds after `docker compose up` and then refresh the browser.
-
-### Rebuilding after code changes
-
-```bash
-docker compose up --build
-```
-
-To force a full clean rebuild:
+Then restart:
 
 ```bash
 docker compose down
-docker compose build --no-cache
-docker compose up
+docker compose up --build
 ```
 
----
+## Security Notes
 
-## 📄 License
+- Never commit `.env` files, Firebase credentials, API keys, RCMS credentials, or SMTP passwords.
+- Keep RCMS signing on the backend only.
+- Restrict `ALLOWED_ORIGINS` in production.
+- Rotate any credential that was accidentally committed or shared.
+- Review CORS, authentication, and report-delivery settings before production use.
 
-> This project was developed for **educational purposes** as part of a university IoT course. It is not intended for production deployment without further security hardening.
+## About the Reserve
 
----
+I Giganti della Sila / Riserva Naturale Biogenetica di Fallistro is a protected forest in Sila National Park near Camigliatello Silano, Province of Cosenza, Calabria, Italy.
 
-## 🌱 About the Reserve
+The reserve is known for ancient Laricio pine trees, some more than 350 years old and up to about 45 metres tall. It is managed by FAI - Fondo Ambiente Italiano.
 
-**I Giganti della Sila – Riserva Naturale Biogenetica di Fallistro** is a protected forest located in **Sila National Park**, near **Camigliatello Silano** in the province of **Cosenza**, Calabria, southern Italy.
+More information: https://fondoambiente.it/i-giganti-della-sila-eng/
 
-The reserve takes its name from its most remarkable feature: a stand of **ancient Laricio pine trees (*Pinus nigra* subsp. *laricio*)** planted in the **17th century**. Some trees reach **45 metres in height** and nearly **2 metres in trunk diameter**, making them among the largest and oldest individual trees in Italy.
+## License and Academic Context
 
-The forest floor hosts a rich understorey of ferns, mosses, and flowering plants, while the broader Sila plateau supports a diverse ecosystem including wolves, deer, and a wide variety of bird species.
-
-The reserve is managed by **FAI – Fondo Ambiente Italiano** (*Italian Environment Fund*) and is open to visitors from **April to November**.
-
-📍 **Location:** Near Camigliatello Silano, Province of Cosenza, Calabria, Italy  
-🌐 **More information:** [fondoambiente.it/i-giganti-della-sila-eng](https://fondoambiente.it/i-giganti-della-sila-eng/)
-
----
-
-*Developed as part of an IoT course project — academic year 2025/2026.*
->>>>>>> 9aa87cb84384008b1c4124ed9ba6a0c04eddf7ba
+This project was developed for educational and research purposes as part of an IoT smart-park system. It should be reviewed, secured, and tested further before production deployment.
