@@ -958,3 +958,24 @@ from(bucket: "{INFLUXDB_BUCKET}")
         "language": lang,
         "query": effective_query,
     }
+
+
+@router.post(
+    "/deliver",
+    summary="Send generated Smart Park report by email or WhatsApp",
+    dependencies=[Depends(get_admin_session_user)],
+)
+async def deliver_report(payload: ReportDeliveryRequest) -> dict[str, Any]:
+    channel = payload.channel.strip().lower()
+    if channel == "email":
+        _send_report_email(payload)
+    elif channel == "whatsapp":
+        _send_report_whatsapp(payload)
+    else:
+        raise HTTPException(status_code=400, detail="Delivery channel must be email or whatsapp.")
+
+    return {
+        "status": "sent",
+        "channel": channel,
+        "contact": payload.contact,
+    }

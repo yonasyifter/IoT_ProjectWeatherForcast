@@ -340,7 +340,19 @@
                           class="ap-report-gauge"
                           :class="`is-${gauge.tone}`"
                         >
-                          <div class="ap-report-gauge-ring" :style="{ '--gauge-value': gauge.percent, '--gauge-color': gauge.color }">
+                          <div class="ap-report-gauge-ring">
+                            <svg class="ap-report-gauge-svg" viewBox="0 0 94 94" aria-hidden="true">
+                              <circle class="ap-report-gauge-track" cx="47" cy="47" r="39" pathLength="100"></circle>
+                              <circle
+                                class="ap-report-gauge-arc"
+                                cx="47"
+                                cy="47"
+                                r="39"
+                                pathLength="100"
+                                :stroke="gauge.color"
+                                :stroke-dasharray="`${gauge.percent} 100`"
+                              ></circle>
+                            </svg>
                             <div class="ap-report-gauge-core">
                               <strong>{{ gauge.value }}</strong>
                               <span>{{ gauge.unit }}</span>
@@ -732,6 +744,7 @@ const reportCanvasBackground = {
 const CHAT_REQUEST_TIMEOUT_MS = 55000
 const REPORT_REQUEST_TIMEOUT_MS = 130000
 const SNAPSHOT_REQUEST_TIMEOUT_MS = 10000
+const DELIVERY_REQUEST_TIMEOUT_MS = 45000
 
 const reportContent      = ref('')
 const reportLoading      = ref(false)
@@ -991,15 +1004,38 @@ function clearReportState () {
 async function sendDelivery () {
   const contact = deliveryChoice.value === 'email' ? deliveryEmail.value : deliveryPhone.value
   if (!contact.trim()) { deliveryResult.value = { type: 'error', message: 'Please enter a valid contact.' }; return }
+  if (!reportContent.value.trim()) { deliveryResult.value = { type: 'error', message: 'Generate a report before sending.' }; return }
 
   deliverySending.value = true
-  await new Promise(r => setTimeout(r, 1400))
-  deliverySending.value = false
-  deliveryResult.value  = {
-    type: 'success',
-    message: deliveryChoice.value === 'email'
-      ? `✅ Report queued for delivery to ${deliveryEmail.value}`
-      : `✅ Report queued for WhatsApp delivery to ${deliveryPhone.value}`,
+  deliveryResult.value = null
+
+  try {
+    await renderReportCharts()
+    const payload = {
+      channel: deliveryChoice.value,
+      contact: contact.trim(),
+      subject: `Smart Park Report - ${new Date().toLocaleString()}`,
+      html: deliveryChoice.value === 'email' ? deliveryReportHtml() : '',
+      text: reportPlainTextForDelivery(),
+    }
+    await requestWithTimeout(
+      signal => api.post('/api/crew/deliver', payload, { signal }),
+      DELIVERY_REQUEST_TIMEOUT_MS,
+      'Report delivery timed out. Please check the delivery provider and try again.'
+    )
+    deliveryResult.value = {
+      type: 'success',
+      message: deliveryChoice.value === 'email'
+        ? `Report sent to ${deliveryEmail.value}.`
+        : `Report sent by WhatsApp to ${deliveryPhone.value}.`,
+    }
+  } catch (e) {
+    deliveryResult.value = {
+      type: 'error',
+      message: e.message || 'Report delivery failed.',
+    }
+  } finally {
+    deliverySending.value = false
   }
 }
 
@@ -1800,6 +1836,53 @@ function reportGaugeHtml () {
   return `<div class="gauge-section"><h1>Latest Edge Health Gauges</h1>${devices}</div>`
 }
 
+function reportDeliveryStyles () {
+  return `
+    body{font-family:"Times New Roman",Times,serif;font-size:12pt;margin:2.1cm;background:#ffffff;color:#111827}
+    h1{font-family:"Times New Roman",Times,serif;font-size:22pt;color:#111827;border-bottom:3pt solid #2563eb;padding-bottom:8pt}
+    h2{font-family:"Times New Roman",Times,serif;font-size:16pt;color:#1d4ed8;border-bottom:1pt solid #bfdbfe;padding-bottom:4pt;margin-top:18pt}
+    h3{font-family:"Times New Roman",Times,serif;font-size:13pt;color:#0369a1;margin-top:14pt}
+    p{line-height:1.45}table{border-collapse:collapse;width:100%;margin:12pt 0;border:1pt solid #cbd5e1}
+    th{background:#1d4ed8;color:#fff;padding:7pt 10pt;text-align:left}
+    td{border:1pt solid #dbeafe;padding:6pt 8pt}tr:nth-child(even){background:#eff6ff}
+    .visuals{background:#f8fafc;border:1pt solid #bfdbfe;padding:14pt;margin-bottom:18pt}
+    .chart-grid{display:block}.chart-card{background:#fff;border:1pt solid #bfdbfe;padding:12pt;margin:12pt 0}
+    .chart-card img{width:100%;max-width:640px;display:block;margin:8pt auto}
+    .gauge-section{background:#fff;border:1pt solid #bfdbfe;padding:12pt;margin-bottom:14pt}
+    .gauge-device{margin:10pt 0}.gauge-table{table-layout:fixed}.gauge-cell{width:33%;background:#fff}
+    .gauge-label{font-weight:bold;color:#1d4ed8}.gauge-value{font-size:18pt;font-weight:bold;margin:5pt 0}
+    .gauge-bar{height:10pt;background:#e5e7eb;border-radius:8pt;overflow:hidden}.gauge-bar span{display:block;height:100%}
+    .gauge-status{font-size:10pt;color:#475569;margin-top:4pt}
+  `
+}
+
+function deliveryReportHtml () {
+  const chartsHtml = reportChartImagesHtml()
+  const gaugesHtml = reportGaugeHtml()
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Smart Park Report</title>
+    <style>${reportDeliveryStyles()}</style></head><body>
+    <div class="visuals"><h1>Visual Analytics</h1>${gaugesHtml}<div class="chart-grid">${chartsHtml}</div></div>
+    ${renderedReport.value}</body></html>`
+}
+
+function reportPlainTextForDelivery () {
+  const base = stripLatexDelimiters(reportContent.value || '')
+    .replace(/```delivery_prompt[\s\S]*?```/g, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/[*_`]/g, '')
+    .replace(/\|/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  const gaugeText = reportEdgeGauges.value.map(device => {
+    const values = device.gauges.map(gauge => `${gauge.label}: ${gauge.value} ${gauge.unit} (${gauge.status})`).join('; ')
+    return `Device ${device.deviceId} Edge Health - ${values}`
+  }).join('\n')
+
+  return [gaugeText, base].filter(Boolean).join('\n\n')
+}
+
 // ── PDF download ──────────────────────────────────────────────────────────
 async function downloadPDF () {
   downloadingPDF.value = true
@@ -1856,29 +1939,10 @@ async function downloadPDF () {
 }
 
 async function downloadWord () {
-    downloadingWord.value = true
+  downloadingWord.value = true
   try {
     await renderReportCharts()
-    const chartsHtml = reportChartImagesHtml()
-    const gaugesHtml = reportGaugeHtml()
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Smart Park Report</title>
-    <style>
-    body{font-family:"Times New Roman",Times,serif;font-size:12pt;margin:2.1cm;background:#ffffff;color:#111827}
-    h1{font-family:"Times New Roman",Times,serif;font-size:22pt;color:#111827;border-bottom:3pt solid #2563eb;padding-bottom:8pt}
-    h2{font-family:"Times New Roman",Times,serif;font-size:16pt;color:#1d4ed8;border-bottom:1pt solid #bfdbfe;padding-bottom:4pt;margin-top:18pt}
-    h3{font-family:"Times New Roman",Times,serif;font-size:13pt;color:#0369a1;margin-top:14pt}
-    p{line-height:1.45}table{border-collapse:collapse;width:100%;margin:12pt 0;border:1pt solid #cbd5e1}
-    th{background:#1d4ed8;color:#fff;padding:7pt 10pt;text-align:left}
-    td{border:1pt solid #dbeafe;padding:6pt 8pt}tr:nth-child(even){background:#eff6ff}
-    .visuals{background:#f8fafc;border:1pt solid #bfdbfe;padding:14pt;margin-bottom:18pt}
-    .chart-grid{display:block}.chart-card{background:#fff;border:1pt solid #bfdbfe;padding:12pt;margin:12pt 0}
-    .chart-card img{width:100%;max-width:640px;display:block;margin:8pt auto}
-    .gauge-section{background:#fff;border:1pt solid #bfdbfe;padding:12pt;margin-bottom:14pt}
-    .gauge-device{margin:10pt 0}.gauge-table{table-layout:fixed}.gauge-cell{width:33%;background:#fff}
-    .gauge-label{font-weight:bold;color:#1d4ed8}.gauge-value{font-size:18pt;font-weight:bold;margin:5pt 0}
-    .gauge-bar{height:10pt;background:#e5e7eb;border-radius:8pt;overflow:hidden}.gauge-bar span{display:block;height:100%}
-    .gauge-status{font-size:10pt;color:#475569;margin-top:4pt}
-    </style></head><body><div class="visuals"><h1>Visual Analytics</h1>${gaugesHtml}<div class="chart-grid">${chartsHtml}</div></div>${renderedReport.value}</body></html>`
+    const html = deliveryReportHtml()
     const blob = new Blob([html], { type: 'application/msword;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -2485,23 +2549,42 @@ function weatherConfidencePercent (payload) {
   min-width: 0;
 }
 .ap-report-gauge-ring {
-  --gauge-value: 0;
-  --gauge-color: #94a3b8;
   width: 94px;
   aspect-ratio: 1;
   margin: 0 auto 8px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background:
-    radial-gradient(circle at center, #ffffff 0 58%, transparent 59%),
-    conic-gradient(var(--gauge-color) calc(var(--gauge-value) * 1%), #e5e7eb 0);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
   box-shadow: inset 0 0 0 1px #e2e8f0, 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+.ap-report-gauge-svg {
+  position: absolute;
+  inset: 0;
+  width: 94px;
+  height: 94px;
+}
+.ap-report-gauge-track,
+.ap-report-gauge-arc {
+  fill: none;
+  stroke-width: 10;
+}
+.ap-report-gauge-track {
+  stroke: #e5e7eb;
+}
+.ap-report-gauge-arc {
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 47px 47px;
 }
 .ap-report-gauge-core {
   width: 70px;
   aspect-ratio: 1;
   border-radius: 50%;
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;

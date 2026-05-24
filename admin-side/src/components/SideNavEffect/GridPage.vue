@@ -8,9 +8,9 @@ import 'leaflet/dist/leaflet.css'
 /* -----------------------
  * Constants
  * --------------------- */
-const SVG_WIDTH = 720
-const SVG_HEIGHT = 220
-const PADDING = { left: 60, right: 30, top: 20, bottom: 50 }
+const SVG_WIDTH = 1200
+const SVG_HEIGHT = 280
+const PADDING = { left: 126, right: 118, top: 30, bottom: 88 }
 const INNER_WIDTH = SVG_WIDTH - PADDING.left - PADDING.right
 const INNER_HEIGHT = SVG_HEIGHT - PADDING.top - PADDING.bottom
 const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 70
@@ -18,7 +18,7 @@ const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 70
 // Expanded modal chart dims (larger viewport)
 const EXP_WIDTH = 1100
 const EXP_HEIGHT = 400
-const EXP_PAD = { left: 70, right: 40, top: 30, bottom: 60 }
+const EXP_PAD = { left: 96, right: 108, top: 36, bottom: 78 }
 const EXP_INNER_W = EXP_WIDTH - EXP_PAD.left - EXP_PAD.right
 const EXP_INNER_H = EXP_HEIGHT - EXP_PAD.top - EXP_PAD.bottom
 
@@ -93,14 +93,30 @@ const formatShortTime = (ts) => {
 
 const minutesForRange = (range) => TIME_RANGES[range] || 180
 
+const fmt = (value, digits = 1) => {
+  const n = toNum(value)
+  return n === null ? '—' : n.toFixed(digits)
+}
+
 /* -----------------------
  * Auto-fit helpers
  * Adds 5% padding above/below data range so lines never hug axes
  * --------------------- */
 const fitRange = (min, max) => {
-  if (min === max) { return { lo: min - 1, hi: max + 1 } }
-  const pad = (max - min) * 0.08
-  return { lo: min - pad, hi: max + pad }
+  const safeMin = Number.isFinite(min) ? min : 0
+  const safeMax = Number.isFinite(max) ? max : safeMin + 1
+  const rawLo = safeMin === safeMax ? safeMin - 1 : safeMin
+  const rawHi = safeMin === safeMax ? safeMax + 1 : safeMax
+  const paddedLo = rawLo - (rawHi - rawLo) * 0.08
+  const paddedHi = rawHi + (rawHi - rawLo) * 0.08
+  const rawStep = (paddedHi - paddedLo || 1) / 5
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)))
+  const normalized = rawStep / magnitude
+  const niceStep = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude
+  return {
+    lo: Math.floor(paddedLo / niceStep) * niceStep,
+    hi: Math.ceil(paddedHi / niceStep) * niceStep
+  }
 }
 
 /* -----------------------
@@ -121,39 +137,43 @@ const yForValue = (v, lo, hi, pad = PADDING, ih = INNER_HEIGHT) => {
 /* -----------------------
  * Axis labels
  * --------------------- */
-const getTimeLabels = computed(() => {
-  const len = sensorData.value.length
+const buildTimeLabels = (rows, targetCount, pad = PADDING, iw = INNER_WIDTH) => {
+  const len = rows.length
   if (len === 0) return []
-  const labels = []
-  const step = Math.max(1, Math.floor(len / 6))
-  for (let i = 0; i < len; i += step) {
-    labels.push({ x: xForIndex(i, len), text: formatShortTime(sensorData.value[i].time) })
-  }
-  if (len > 1) {
-    labels.push({ x: xForIndex(len - 1, len), text: formatShortTime(sensorData.value[len - 1].time) })
-  }
+  const maxLabels = Math.max(2, Math.min(targetCount, len))
+  const seen = new Set()
+  const labels = Array.from({ length: maxLabels }, (_, i) => {
+    const index = maxLabels === 1 ? 0 : Math.round((i * (len - 1)) / (maxLabels - 1))
+    return index
+  })
+    .filter(index => {
+      if (seen.has(index)) return false
+      seen.add(index)
+      return true
+    })
+    .map(index => ({
+      x: xForIndex(index, len, pad, iw),
+      text: formatShortTime(rows[index].time),
+      index
+    }))
   return labels
-})
+}
 
-const getTimeLabelsExp = computed(() => {
-  const len = sensorData.value.length
-  if (len === 0) return []
-  const labels = []
-  const step = Math.max(1, Math.floor(len / 10))
-  for (let i = 0; i < len; i += step) {
-    labels.push({ x: xForIndex(i, len, EXP_PAD, EXP_INNER_W), text: formatShortTime(sensorData.value[i].time) })
-  }
-  if (len > 1) {
-    labels.push({ x: xForIndex(len - 1, len, EXP_PAD, EXP_INNER_W), text: formatShortTime(sensorData.value[len - 1].time) })
-  }
-  return labels
-})
+const getTimeLabels = computed(() => buildTimeLabels(sensorData.value, 6))
+
+const getTimeLabelsExp = computed(() => buildTimeLabels(sensorData.value, 8, EXP_PAD, EXP_INNER_W))
 
 const makeYLabels = (lo, hi, unit = '', count = 5, pad = PADDING, ih = INNER_HEIGHT) => {
-  const step = (hi - lo) / count
+  const range = hi - lo || 1
+  const rawStep = range / count
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)))
+  const normalized = rawStep / magnitude
+  const niceStep = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude
+  const niceLo = Math.floor(lo / niceStep) * niceStep
+  const niceHi = Math.ceil(hi / niceStep) * niceStep
   return Array.from({ length: count + 1 }, (_, i) => ({
     y: pad.top + ih - (ih * i / count),
-    text: (lo + step * i).toFixed(1) + unit
+    text: (niceLo + ((niceHi - niceLo) / count) * i).toFixed(niceStep < 1 ? 2 : 1) + unit
   }))
 }
 
@@ -178,11 +198,15 @@ const avgPressure = computed(() => calcStat('pressure', 'avg'))
 const avgNoise = computed(() => calcStat('noise', 'avg'))
 const minNoise = computed(() => calcStat('noise', 'min'))
 const maxNoise = computed(() => calcStat('noise', 'max'))
+const avgPredictionTime = computed(() => calcStat('prediction_time', 'avg'))
+const minPredictionTime = computed(() => calcStat('prediction_time', 'min'))
+const maxPredictionTime = computed(() => calcStat('prediction_time', 'max'))
 
 // Auto-fit ranges
 const tempRange = computed(() => fitRange(minTemperature.value, maxTemperature.value))
 const humRange = computed(() => fitRange(minHumidity.value, maxHumidity.value))
 const noiseRange = computed(() => fitRange(minNoise.value, maxNoise.value))
+const predictionTimeRange = computed(() => fitRange(minPredictionTime.value, maxPredictionTime.value))
 
 /* -----------------------
  * Y-axis labels (auto-fit)
@@ -214,6 +238,7 @@ const buildSeries = (key, lo, hi, pad = PADDING, iw = INNER_WIDTH, ih = INNER_HE
 const temperatureSeries = computed(() => buildSeries('temperature', tempRange.value.lo, tempRange.value.hi))
 const humiditySeries = computed(() => buildSeries('humidity', humRange.value.lo, humRange.value.hi))
 const noiseSeries = computed(() => buildSeries('noise', noiseRange.value.lo, noiseRange.value.hi))
+const predictionTimeSeries = computed(() => buildSeries('prediction_time', predictionTimeRange.value.lo, predictionTimeRange.value.hi))
 
 // Expanded modal charts
 const temperatureSeriesExp = computed(() => buildSeries('temperature', tempRange.value.lo, tempRange.value.hi, EXP_PAD, EXP_INNER_W, EXP_INNER_H))
@@ -224,6 +249,7 @@ const polylinePoints = (series) => series.map(p => `${p.x},${p.y}`).join(' ')
 
 const temperatureLinePoints = computed(() => polylinePoints(temperatureSeries.value))
 const humidityLinePoints = computed(() => polylinePoints(humiditySeries.value))
+const predictionTimeLinePoints = computed(() => polylinePoints(predictionTimeSeries.value))
 const temperatureLinePointsExp = computed(() => polylinePoints(temperatureSeriesExp.value))
 const humidityLinePointsExp = computed(() => polylinePoints(humiditySeriesExp.value))
 
@@ -251,6 +277,8 @@ const noiseBars = computed(() =>
 const noiseBarsExp = computed(() =>
   buildNoiseBars(noiseSeriesExp.value, EXP_PAD, EXP_INNER_W, EXP_INNER_H, sensorData.value.length)
 )
+
+const predictionTimeYLabels = computed(() => makeYLabels(predictionTimeRange.value.lo, predictionTimeRange.value.hi, 'ms'))
 
 /* -----------------------
  * Grid line helpers
@@ -361,6 +389,7 @@ const fetchSensorData = async () => {
         vibrAccX: toNum(d.vibrAccX),
         vibrAccY: toNum(d.vibrAccY),
         vibrAccZ: toNum(d.vibrAccZ),
+        prediction_time: toNum(d.prediction_time),
         latitude: toNum(d.latitude),
         longitude: toNum(d.longitude),
         device_id: d.device_id || selectedDevice.value
@@ -431,6 +460,7 @@ const generateSimulatedData = () => {
     vibrAccX: Math.random() * 2 - 1,
     vibrAccY: Math.random() * 2 - 1,
     vibrAccZ: Math.random() * 2 - 1,
+    prediction_time: 60 + Math.random() * 120,
     latitude: 39.0742 + go.lat + (Math.random() - 0.5) * 0.001,
     longitude: 16.3027 + go.lng + (Math.random() - 0.5) * 0.001,
     device_id: selectedDevice.value
@@ -456,8 +486,8 @@ const closeChart = () => {
 /* -----------------------
  * Event handlers
  * --------------------- */
-const handleMouseOver = (type, value, time, isExpanded = false) => {
-  const pt = { type, v: value, t: time }
+const handleMouseOver = (type, value, time, isExpanded = false, meta = {}) => {
+  const pt = { type, v: value, t: time, ...meta }
   if (isExpanded) expandedHovered.value = pt
   else hoveredPoint.value = pt
 }
@@ -515,20 +545,21 @@ onBeforeUnmount(() => {
             <div v-if="expandedChart === 'tempHum'" class="modal-chart-wrap" style="position:relative">
               <svg :viewBox="`0 0 ${EXP_WIDTH} ${EXP_HEIGHT}`" style="width:100%;display:block">
                 <!-- Grid -->
-                <g style="opacity:0.06">
+                <g class="chart-grid-lines">
                   <line v-for="(g,i) in gridLines(8, EXP_PAD, EXP_INNER_W, EXP_INNER_H)"
                     :key="`eg-h-${i}`"
                     :x1="EXP_PAD.left" :y1="g.y"
                     :x2="EXP_PAD.left + EXP_INNER_W" :y2="g.y"
-                    stroke="white" stroke-width="1"/>
+                    stroke="currentColor" stroke-width="1"/>
                   <line v-for="j in 10" :key="`eg-v-${j}`"
                     :x1="EXP_PAD.left + (EXP_INNER_W / 10) * j" :y1="EXP_PAD.top"
                     :x2="EXP_PAD.left + (EXP_INNER_W / 10) * j" :y2="EXP_PAD.top + EXP_INNER_H"
-                    stroke="white" stroke-width="1"/>
+                    stroke="currentColor" stroke-width="1"/>
                 </g>
                 <!-- Axes -->
-                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top" :x2="EXP_PAD.left" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#4a5568" stroke-width="2"/>
-                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top + EXP_INNER_H" :x2="EXP_PAD.left + EXP_INNER_W" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#4a5568" stroke-width="2"/>
+                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top" :x2="EXP_PAD.left" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#64748b" stroke-width="2"/>
+                <line :x1="EXP_PAD.left + EXP_INNER_W" :y1="EXP_PAD.top" :x2="EXP_PAD.left + EXP_INNER_W" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#64748b" stroke-width="2"/>
+                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top + EXP_INNER_H" :x2="EXP_PAD.left + EXP_INNER_W" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#64748b" stroke-width="2"/>
                 <!-- Y temp labels -->
                 <text v-for="(l,i) in temperatureYLabelsExp" :key="`ety-${i}`"
                   :x="EXP_PAD.left - 10" :y="l.y"
@@ -539,8 +570,10 @@ onBeforeUnmount(() => {
                   text-anchor="start" dominant-baseline="middle" fill="#3d9fff" font-size="11" font-weight="600">{{ l.text }}</text>
                 <!-- X time labels -->
                 <text v-for="(l,i) in getTimeLabelsExp" :key="`etx-${i}`"
-                  :x="l.x" :y="EXP_PAD.top + EXP_INNER_H + 22"
-                  text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600">{{ l.text }}</text>
+                  :x="l.x" :y="EXP_PAD.top + EXP_INNER_H + 28"
+                  text-anchor="end" fill="#cbd5e1" font-size="10" font-weight="600"
+                  :transform="`rotate(-28, ${l.x}, ${EXP_PAD.top + EXP_INNER_H + 28})`">{{ l.text }}</text>
+                <line v-if="expandedHovered?.x" :x1="expandedHovered.x" :y1="EXP_PAD.top" :x2="expandedHovered.x" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 4" opacity="0.55"/>
                 <!-- Temp line -->
                 <polyline v-if="temperatureSeriesExp.length"
                   :points="temperatureLinePointsExp"
@@ -553,7 +586,7 @@ onBeforeUnmount(() => {
                 <circle v-for="p in temperatureSeriesExp" :key="`etp-${p.i}`"
                   :cx="p.x" :cy="p.y" r="4"
                   fill="#ff9b3d" class="chart-point"
-                  @mouseover="handleMouseOver('temp', p.v, p.t, true)"
+                  @mouseover="handleMouseOver('temp', p.v, p.t, true, { x: p.x, y: p.y })"
                   @mouseout="handleMouseOut(true)">
                   <title>{{ p.v?.toFixed(2) }}°C @ {{ formatTimestamp(p.t) }}</title>
                 </circle>
@@ -561,7 +594,7 @@ onBeforeUnmount(() => {
                 <circle v-for="p in humiditySeriesExp" :key="`ehp-${p.i}`"
                   :cx="p.x" :cy="p.y" r="4"
                   fill="#3d9fff" class="chart-point"
-                  @mouseover="handleMouseOver('hum', p.v, p.t, true)"
+                  @mouseover="handleMouseOver('hum', p.v, p.t, true, { x: p.x, y: p.y })"
                   @mouseout="handleMouseOut(true)">
                   <title>{{ p.v?.toFixed(2) }}% @ {{ formatTimestamp(p.t) }}</title>
                 </circle>
@@ -569,11 +602,11 @@ onBeforeUnmount(() => {
                 <text :x="EXP_PAD.left - 50" :y="EXP_PAD.top + EXP_INNER_H / 2"
                   text-anchor="middle" fill="#ff9b3d" font-size="12" font-weight="700"
                   :transform="`rotate(-90, ${EXP_PAD.left - 50}, ${EXP_PAD.top + EXP_INNER_H / 2})`">Temperature (°C)</text>
-                <text :x="EXP_PAD.left + EXP_INNER_W + 50" :y="EXP_PAD.top + EXP_INNER_H / 2"
+                <text :x="EXP_PAD.left + EXP_INNER_W + 58" :y="EXP_PAD.top + EXP_INNER_H / 2"
                   text-anchor="middle" fill="#3d9fff" font-size="12" font-weight="700"
-                  :transform="`rotate(90, ${EXP_PAD.left + EXP_INNER_W + 50}, ${EXP_PAD.top + EXP_INNER_H / 2})`">Humidity (%)</text>
+                  :transform="`rotate(90, ${EXP_PAD.left + EXP_INNER_W + 58}, ${EXP_PAD.top + EXP_INNER_H / 2})`">Humidity (%)</text>
                 <text :x="EXP_PAD.left + EXP_INNER_W / 2" :y="EXP_PAD.top + EXP_INNER_H + 50"
-                  text-anchor="middle" fill="#94a3b8" font-size="12" font-weight="700">Time</text>
+                  text-anchor="middle" fill="#cbd5e1" font-size="12" font-weight="700">Time</text>
               </svg>
               <!-- Crosshair tooltip -->
               <div v-if="expandedHovered" class="tooltip" :class="`tooltip-${expandedHovered.type}`" style="bottom:24px;left:24px">
@@ -586,30 +619,32 @@ onBeforeUnmount(() => {
             <div v-if="expandedChart === 'noise'" class="modal-chart-wrap" style="position:relative">
               <svg :viewBox="`0 0 ${EXP_WIDTH} ${EXP_HEIGHT}`" style="width:100%;display:block">
                 <!-- Grid -->
-                <g style="opacity:0.06">
+                <g class="chart-grid-lines">
                   <line v-for="(g,i) in gridLines(8, EXP_PAD, EXP_INNER_W, EXP_INNER_H)"
                     :key="`en-h-${i}`"
                     :x1="EXP_PAD.left" :y1="g.y"
                     :x2="EXP_PAD.left + EXP_INNER_W" :y2="g.y"
-                    stroke="white" stroke-width="1"/>
+                    stroke="currentColor" stroke-width="1"/>
                 </g>
                 <!-- Axes -->
-                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top" :x2="EXP_PAD.left" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#4a5568" stroke-width="2"/>
-                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top + EXP_INNER_H" :x2="EXP_PAD.left + EXP_INNER_W" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#4a5568" stroke-width="2"/>
+                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top" :x2="EXP_PAD.left" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#64748b" stroke-width="2"/>
+                <line :x1="EXP_PAD.left" :y1="EXP_PAD.top + EXP_INNER_H" :x2="EXP_PAD.left + EXP_INNER_W" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#64748b" stroke-width="2"/>
                 <!-- Y labels -->
                 <text v-for="(l,i) in noiseYLabelsExp" :key="`eny-${i}`"
                   :x="EXP_PAD.left - 10" :y="l.y"
                   text-anchor="end" dominant-baseline="middle" fill="#22c55e" font-size="11" font-weight="600">{{ l.text }}</text>
                 <!-- X labels -->
                 <text v-for="(l,i) in getTimeLabelsExp" :key="`enx-${i}`"
-                  :x="l.x" :y="EXP_PAD.top + EXP_INNER_H + 22"
-                  text-anchor="middle" fill="#94a3b8" font-size="10" font-weight="600">{{ l.text }}</text>
+                  :x="l.x" :y="EXP_PAD.top + EXP_INNER_H + 28"
+                  text-anchor="end" fill="#cbd5e1" font-size="10" font-weight="600"
+                  :transform="`rotate(-28, ${l.x}, ${EXP_PAD.top + EXP_INNER_H + 28})`">{{ l.text }}</text>
+                <line v-if="expandedHovered?.type === 'noise' && expandedHovered.x" :x1="expandedHovered.x" :y1="EXP_PAD.top" :x2="expandedHovered.x" :y2="EXP_PAD.top + EXP_INNER_H" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 4" opacity="0.55"/>
                 <!-- Bars -->
                 <rect v-for="b in noiseBarsExp" :key="`enb-${b.i}`"
                   :x="b.x" :y="b.y" :width="b.w" :height="b.h" rx="1"
                   :fill="`hsl(${120 - ((b.v - noiseRange.lo) / ((noiseRange.hi - noiseRange.lo) || 1)) * 60}, 70%, 50%)`"
                   class="noise-bar"
-                  @mouseover="handleMouseOver('noise', b.v, b.t, true)"
+                  @mouseover="handleMouseOver('noise', b.v, b.t, true, { x: b.x + b.w / 2, y: b.y })"
                   @mouseout="handleMouseOut(true)">
                   <title>{{ b.v?.toFixed(2) }} dB @ {{ formatTimestamp(b.t) }}</title>
                 </rect>
@@ -618,7 +653,7 @@ onBeforeUnmount(() => {
                   text-anchor="middle" fill="#22c55e" font-size="12" font-weight="700"
                   :transform="`rotate(-90, ${EXP_PAD.left - 50}, ${EXP_PAD.top + EXP_INNER_H / 2})`">Sound Level (dB)</text>
                 <text :x="EXP_PAD.left + EXP_INNER_W / 2" :y="EXP_PAD.top + EXP_INNER_H + 50"
-                  text-anchor="middle" fill="#94a3b8" font-size="12" font-weight="700">Time</text>
+                  text-anchor="middle" fill="#cbd5e1" font-size="12" font-weight="700">Time</text>
               </svg>
               <div v-if="expandedHovered?.type === 'noise'" class="tooltip tooltip-noise" style="bottom:24px;left:24px">
                 {{ expandedHovered.v?.toFixed(2) }} dB
@@ -755,15 +790,16 @@ onBeforeUnmount(() => {
         <div class="chart-wrap">
           <svg :viewBox="`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`">
             <!-- Grid -->
-            <g style="opacity:0.08">
+            <g class="chart-grid-lines">
               <line v-for="i in 8" :key="`grid-h-${i}`"
                 :x1="PADDING.left" :y1="PADDING.top + (INNER_HEIGHT / 8) * i"
                 :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + (INNER_HEIGHT / 8) * i"
-                stroke="white" stroke-width="1"/>
+                stroke="currentColor" stroke-width="1"/>
             </g>
             <!-- Axes -->
-            <line :x1="PADDING.left" :y1="PADDING.top" :x2="PADDING.left" :y2="PADDING.top + INNER_HEIGHT" stroke="#4a5568" stroke-width="2"/>
-            <line :x1="PADDING.left" :y1="PADDING.top + INNER_HEIGHT" :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + INNER_HEIGHT" stroke="#4a5568" stroke-width="2"/>
+            <line :x1="PADDING.left" :y1="PADDING.top" :x2="PADDING.left" :y2="PADDING.top + INNER_HEIGHT" stroke="#64748b" stroke-width="2"/>
+            <line :x1="PADDING.left + INNER_WIDTH" :y1="PADDING.top" :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + INNER_HEIGHT" stroke="#64748b" stroke-width="2"/>
+            <line :x1="PADDING.left" :y1="PADDING.top + INNER_HEIGHT" :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + INNER_HEIGHT" stroke="#64748b" stroke-width="2"/>
             <!-- Y temp -->
             <text v-for="(l,i) in temperatureYLabels" :key="`ty-${i}`"
               :x="PADDING.left - 10" :y="l.y"
@@ -774,8 +810,10 @@ onBeforeUnmount(() => {
               text-anchor="start" dominant-baseline="middle" fill="#3d9fff" font-size="10" font-weight="600">{{ l.text }}</text>
             <!-- X time -->
             <text v-for="(l,i) in getTimeLabels" :key="`tx-${i}`"
-              :x="l.x" :y="PADDING.top + INNER_HEIGHT + 20"
-              text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="600">{{ l.text }}</text>
+              :x="l.x" :y="PADDING.top + INNER_HEIGHT + 26"
+              text-anchor="end" fill="#cbd5e1" font-size="9" font-weight="600"
+              :transform="`rotate(-28, ${l.x}, ${PADDING.top + INNER_HEIGHT + 26})`">{{ l.text }}</text>
+            <line v-if="hoveredPoint && ['temp','hum'].includes(hoveredPoint.type) && hoveredPoint.x" :x1="hoveredPoint.x" :y1="PADDING.top" :x2="hoveredPoint.x" :y2="PADDING.top + INNER_HEIGHT" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 4" opacity="0.55"/>
             <!-- Lines -->
             <polyline v-if="temperatureSeries.length" :points="temperatureLinePoints"
               fill="none" stroke="#ff9b3d" stroke-width="1.5"/>
@@ -784,25 +822,25 @@ onBeforeUnmount(() => {
             <!-- Points -->
             <circle v-for="p in temperatureSeries" :key="`tp-${p.i}`"
               :cx="p.x" :cy="p.y" r="3" fill="#ff9b3d" class="chart-point"
-              @mouseover.stop="handleMouseOver('temp', p.v, p.t)"
+              @mouseover.stop="handleMouseOver('temp', p.v, p.t, false, { x: p.x, y: p.y })"
               @mouseout.stop="handleMouseOut">
               <title>{{ p.v?.toFixed(2) }}°C</title>
             </circle>
             <circle v-for="p in humiditySeries" :key="`hp-${p.i}`"
               :cx="p.x" :cy="p.y" r="3" fill="#3d9fff" class="chart-point"
-              @mouseover.stop="handleMouseOver('hum', p.v, p.t)"
+              @mouseover.stop="handleMouseOver('hum', p.v, p.t, false, { x: p.x, y: p.y })"
               @mouseout.stop="handleMouseOut">
               <title>{{ p.v?.toFixed(2) }}%</title>
             </circle>
             <!-- Axis text -->
-            <text :x="PADDING.left - 45" :y="PADDING.top + INNER_HEIGHT / 2"
+            <text :x="PADDING.left - 78" :y="PADDING.top + INNER_HEIGHT / 2"
               text-anchor="middle" fill="#ff9b3d" font-size="11" font-weight="700"
-              transform="rotate(-90, 15, 120)">Temperature (°C)</text>
-            <text :x="PADDING.left + INNER_WIDTH + 45" :y="PADDING.top + INNER_HEIGHT / 2"
+              :transform="`rotate(-90, ${PADDING.left - 78}, ${PADDING.top + INNER_HEIGHT / 2})`">Temperature (°C)</text>
+            <text :x="PADDING.left + INNER_WIDTH + 78" :y="PADDING.top + INNER_HEIGHT / 2"
               text-anchor="middle" fill="#3d9fff" font-size="11" font-weight="700"
-              transform="rotate(90, 705, 120)">Humidity (%)</text>
+              :transform="`rotate(90, ${PADDING.left + INNER_WIDTH + 78}, ${PADDING.top + INNER_HEIGHT / 2})`">Humidity (%)</text>
             <text :x="PADDING.left + INNER_WIDTH / 2" :y="PADDING.top + INNER_HEIGHT + 40"
-              text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="700">Time</text>
+              text-anchor="middle" fill="#cbd5e1" font-size="11" font-weight="700">Time</text>
           </svg>
           <div v-if="hoveredPoint && ['temp','hum'].includes(hoveredPoint.type)" class="tooltip" :class="`tooltip-${hoveredPoint.type}`">
             {{ hoveredPoint.v?.toFixed(2) }}{{ hoveredPoint.type === 'temp' ? '°C' : '%' }}
@@ -840,38 +878,40 @@ onBeforeUnmount(() => {
         <div class="chart-wrap-noise">
           <svg :viewBox="`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`">
             <!-- Grid -->
-            <g style="opacity:0.08">
+            <g class="chart-grid-lines">
               <line v-for="i in 8" :key="`ng-${i}`"
                 :x1="PADDING.left" :y1="PADDING.top + (INNER_HEIGHT / 8) * i"
                 :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + (INNER_HEIGHT / 8) * i"
-                stroke="white" stroke-width="1"/>
+                stroke="currentColor" stroke-width="1"/>
             </g>
             <!-- Axes -->
-            <line :x1="PADDING.left" :y1="PADDING.top" :x2="PADDING.left" :y2="PADDING.top + INNER_HEIGHT" stroke="#4a5568" stroke-width="2"/>
-            <line :x1="PADDING.left" :y1="PADDING.top + INNER_HEIGHT" :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + INNER_HEIGHT" stroke="#4a5568" stroke-width="2"/>
+            <line :x1="PADDING.left" :y1="PADDING.top" :x2="PADDING.left" :y2="PADDING.top + INNER_HEIGHT" stroke="#64748b" stroke-width="2"/>
+            <line :x1="PADDING.left" :y1="PADDING.top + INNER_HEIGHT" :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + INNER_HEIGHT" stroke="#64748b" stroke-width="2"/>
             <!-- Y labels -->
             <text v-for="(l,i) in noiseYLabels" :key="`ny-${i}`"
               :x="PADDING.left - 10" :y="l.y"
               text-anchor="end" dominant-baseline="middle" fill="#22c55e" font-size="10" font-weight="600">{{ l.text }}</text>
             <!-- X labels -->
             <text v-for="(l,i) in getTimeLabels" :key="`nt-${i}`"
-              :x="l.x" :y="PADDING.top + INNER_HEIGHT + 20"
-              text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="600">{{ l.text }}</text>
+              :x="l.x" :y="PADDING.top + INNER_HEIGHT + 26"
+              text-anchor="end" fill="#cbd5e1" font-size="9" font-weight="600"
+              :transform="`rotate(-28, ${l.x}, ${PADDING.top + INNER_HEIGHT + 26})`">{{ l.text }}</text>
+            <line v-if="hoveredPoint?.type === 'noise' && hoveredPoint.x" :x1="hoveredPoint.x" :y1="PADDING.top" :x2="hoveredPoint.x" :y2="PADDING.top + INNER_HEIGHT" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 4" opacity="0.55"/>
             <!-- Bars -->
             <rect v-for="b in noiseBars" :key="`nb-${b.i}`"
               :x="b.x" :y="b.y" :width="b.w" :height="b.h" rx="1"
               :fill="`hsl(${120 - ((b.v - noiseRange.lo) / ((noiseRange.hi - noiseRange.lo) || 1)) * 60}, 70%, 50%)`"
               class="noise-bar"
-              @mouseover.stop="handleMouseOver('noise', b.v, b.t)"
+              @mouseover.stop="handleMouseOver('noise', b.v, b.t, false, { x: b.x + b.w / 2, y: b.y })"
               @mouseout.stop="handleMouseOut">
               <title>{{ b.v?.toFixed(2) }} dB</title>
             </rect>
             <!-- Axis text -->
-            <text :x="PADDING.left - 45" :y="PADDING.top + INNER_HEIGHT / 2"
+            <text :x="PADDING.left - 78" :y="PADDING.top + INNER_HEIGHT / 2"
               text-anchor="middle" fill="#22c55e" font-size="11" font-weight="700"
-              transform="rotate(-90, 15, 120)">Sound Level (dB)</text>
+              :transform="`rotate(-90, ${PADDING.left - 78}, ${PADDING.top + INNER_HEIGHT / 2})`">Sound Level (dB)</text>
             <text :x="PADDING.left + INNER_WIDTH / 2" :y="PADDING.top + INNER_HEIGHT + 40"
-              text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="700">Time</text>
+              text-anchor="middle" fill="#cbd5e1" font-size="11" font-weight="700">Time</text>
           </svg>
           <div v-if="hoveredPoint?.type === 'noise'" class="tooltip tooltip-noise">
             {{ hoveredPoint.v?.toFixed(2) }} dB
@@ -933,6 +973,55 @@ onBeforeUnmount(() => {
           <div class="map-coords">
             {{ currentReadings.gps.latitude.toFixed(6) }}°N,
             {{ currentReadings.gps.longitude.toFixed(6) }}°E
+          </div>
+        </div>
+      </section>
+
+      <!-- Prediction Time Distribution -->
+      <section class="panel prediction-panel">
+        <h3 class="chart-title">
+          <i class="bi bi-activity"></i> Prediction-Time Trend
+          <span class="chart-meta">avg {{ fmt(avgPredictionTime) }} ms · {{ predictionTimeSeries.length }} points</span>
+        </h3>
+        <div class="chart-wrap-inline">
+          <svg :viewBox="`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`">
+            <g class="chart-grid-lines">
+              <line v-for="i in 8" :key="`pg-${i}`"
+                :x1="PADDING.left" :y1="PADDING.top + (INNER_HEIGHT / 8) * i"
+                :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + (INNER_HEIGHT / 8) * i"
+                stroke="currentColor" stroke-width="1"/>
+            </g>
+            <line :x1="PADDING.left" :y1="PADDING.top" :x2="PADDING.left" :y2="PADDING.top + INNER_HEIGHT" stroke="#64748b" stroke-width="2"/>
+            <line :x1="PADDING.left" :y1="PADDING.top + INNER_HEIGHT" :x2="PADDING.left + INNER_WIDTH" :y2="PADDING.top + INNER_HEIGHT" stroke="#64748b" stroke-width="2"/>
+            <text v-for="(l,i) in predictionTimeYLabels" :key="`py-${i}`"
+              :x="PADDING.left - 10" :y="l.y"
+              text-anchor="end" dominant-baseline="middle" fill="#a78bfa" font-size="10" font-weight="600">{{ l.text }}</text>
+            <text v-for="(l,i) in getTimeLabels" :key="`px-${i}`"
+              :x="l.x" :y="PADDING.top + INNER_HEIGHT + 26"
+              text-anchor="end" fill="#cbd5e1" font-size="9" font-weight="600"
+              :transform="`rotate(-28, ${l.x}, ${PADDING.top + INNER_HEIGHT + 26})`">{{ l.text }}</text>
+            <line v-if="hoveredPoint?.type === 'prediction' && hoveredPoint.x" :x1="hoveredPoint.x" :y1="PADDING.top" :x2="hoveredPoint.x" :y2="PADDING.top + INNER_HEIGHT" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4 4" opacity="0.55"/>
+            <polyline v-if="predictionTimeSeries.length" :points="predictionTimeLinePoints"
+              fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle v-for="p in predictionTimeSeries" :key="`pred-${p.i}`"
+              :cx="p.x" :cy="p.y" r="3.5"
+              fill="#a78bfa" class="chart-point prediction-point"
+              @mouseover.stop="handleMouseOver('prediction', p.v, p.t, false, { x: p.x, y: p.y })"
+              @mouseout.stop="handleMouseOut">
+              <title>{{ p.v?.toFixed(2) }} ms @ {{ formatTimestamp(p.t) }}</title>
+            </circle>
+            <text :x="PADDING.left - 78" :y="PADDING.top + INNER_HEIGHT / 2"
+              text-anchor="middle" fill="#a78bfa" font-size="11" font-weight="700"
+              :transform="`rotate(-90, ${PADDING.left - 78}, ${PADDING.top + INNER_HEIGHT / 2})`">Prediction Time (ms)</text>
+            <text :x="PADDING.left + INNER_WIDTH / 2" :y="PADDING.top + INNER_HEIGHT + 40"
+              text-anchor="middle" fill="#cbd5e1" font-size="11" font-weight="700">Time</text>
+          </svg>
+          <div v-if="hoveredPoint?.type === 'prediction'" class="tooltip tooltip-prediction">
+            {{ hoveredPoint.v?.toFixed(2) }} ms
+            <div class="tooltip-sub">{{ formatTimestamp(hoveredPoint.t) }}</div>
+          </div>
+          <div v-if="!predictionTimeSeries.length" class="empty-chart">
+            No prediction-time values are available for this device and range.
           </div>
         </div>
       </section>
@@ -1267,6 +1356,7 @@ onBeforeUnmount(() => {
 .chart-panel-wide { grid-column: span 24; }
 .svg-panel { grid-column: span 8; }
 .map-panel { grid-column: span 24; }
+.prediction-panel { grid-column: span 24; }
 
 .chart-title {
   color: var(--text);
@@ -1278,6 +1368,14 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.chart-meta {
+  margin-left: auto;
+  color: #a78bfa;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 
 /* ============ THERMOMETER ============ */
@@ -1291,7 +1389,7 @@ onBeforeUnmount(() => {
 
 /* ============ CHARTS ============ */
 .chart-wrap {
-  height: 360px;
+  height: 300px;
   background: var(--panel-2);
   border: 1px solid var(--panel-border);
   border-radius: 6px;
@@ -1299,19 +1397,57 @@ onBeforeUnmount(() => {
   position: relative;
 }
 .chart-wrap-noise {
-  height: 220px;
+  height: 300px;
   background: var(--panel-2);
   border: 0.5px solid var(--panel-border);
   border-radius: 6px;
   overflow: hidden;
   position: relative;
 }
+.chart-wrap-inline {
+  height: 300px;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(11, 17, 24, 0.98)),
+    var(--panel-2);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+.chart-wrap svg,
+.chart-wrap-noise svg,
+.chart-wrap-inline svg,
+.modal-chart-wrap svg {
+  width: 100%;
+  height: 100%;
+}
+.chart-grid-lines {
+  color: rgba(148, 163, 184, 0.34);
+}
 
-.chart-point { opacity: 0.5; cursor: pointer; transition: opacity 0.2s, r 0.15s; }
-.chart-point:hover { opacity: 1; }
+.chart-point {
+  opacity: 0.68;
+  cursor: pointer;
+  transition: opacity 0.2s, r 0.15s, filter 0.2s;
+  filter: drop-shadow(0 0 4px rgba(255,255,255,0.12));
+}
+.chart-point:hover { opacity: 1; r: 5; filter: drop-shadow(0 0 8px currentColor); }
 
-.noise-bar { opacity: 0.85; cursor: pointer; transition: opacity 0.2s; }
-.noise-bar:hover { opacity: 1; }
+.noise-bar {
+  opacity: 0.86;
+  cursor: pointer;
+  transition: opacity 0.2s, filter 0.2s, transform 0.2s;
+  transform-box: fill-box;
+  transform-origin: center bottom;
+}
+.noise-bar:hover {
+  opacity: 1;
+  filter: drop-shadow(0 0 8px rgba(96, 165, 250, 0.38));
+  transform: scaleY(1.04);
+}
+.prediction-point {
+  filter: drop-shadow(0 0 7px rgba(167, 139, 250, 0.45));
+}
 
 .tooltip {
   position: absolute;
@@ -1330,6 +1466,18 @@ onBeforeUnmount(() => {
 .tooltip-temp { color: #ff9b3d; border-color: rgba(255,155,61,0.7); }
 .tooltip-hum { color: #3d9fff; border-color: rgba(61,159,255,0.7); }
 .tooltip-noise { color: #22c55e; border-color: rgba(34,197,94,0.7); }
+.tooltip-prediction { color: #a78bfa; border-color: rgba(167,139,250,0.7); }
+.empty-chart {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  padding: 16px;
+}
 
 .legend { display: flex; gap: 16px; justify-content: center; margin-top: 10px; font-size: 11px; }
 .legend-item { display: flex; align-items: center; gap: 6px; color: var(--muted); }

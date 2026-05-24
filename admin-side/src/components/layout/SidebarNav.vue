@@ -5,13 +5,13 @@ const emit = defineEmits(['navigate'])
 const { t } = useI18n()
 
 const items = [
+  { key: 'chart',          title: t('sidebar.sensor_analytics') },
   { key: 'grid',      title: t('sidebar.sensor_dashboard') },
   { key: 'weather',        title: t('sidebar.weather_map') },
   { key: 'rcms-dashboard', title: t('sidebar.rcms_dashboard') },
   { key: 'rcms-alerts',    title: t('sidebar.rcms_alerts') },
   { key: 'rcms-gps',       title: t('sidebar.rcms_gps') },
   { key: 'rcms-devices',   title: t('sidebar.rcms_devices') },
-  { key: 'chart',          title: t('sidebar.sensor_analytics') },
   { key: 'agent',          title: t('sidebar.ai_agent') },
 ]
 </script>
@@ -43,7 +43,7 @@ const items = [
         :title="it.title"
       >
         <!-- Sensor Dashboard -->
-        <svg v-if="it.key==='dashboard'" width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <svg v-if="it.key==='grid'" width="20" height="20" viewBox="0 0 24 24" fill="none">
           <rect x="3" y="3" width="7" height="7" rx="1" stroke="white" stroke-width="1.8"/>
           <rect x="14" y="3" width="7" height="7" rx="1" stroke="white" stroke-width="1.8"/>
           <rect x="3" y="14" width="7" height="7" rx="1" stroke="white" stroke-width="1.8"/>

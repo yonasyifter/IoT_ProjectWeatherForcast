@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import AppShell from '../components/layout/AppShell.vue'
 import { rcmsApi } from '../services/rcmsApi.js'
 
@@ -11,6 +11,19 @@ const groups   = ref([])
 const pageNum  = ref(1)
 const pageSize = ref(20)
 const search   = ref('')
+const rcmsAreas = [
+  { label: 'Europe', value: 'EUR' },
+  { label: 'East Asia', value: 'EA' },
+  { label: 'East Asia 2', value: 'EA2' },
+  { label: 'North America', value: 'NA' },
+  { label: 'South America', value: 'SA' },
+  { label: 'Australia', value: 'AU' },
+]
+const deviceOsOptions = [
+  { label: 'RobustOS', value: 0 },
+  { label: 'RobustOS PRO', value: 2 },
+  { label: 'NON RobustOS', value: 1 },
+]
 
 // Modals
 const showAddModal    = ref(false)
@@ -19,9 +32,22 @@ const selectedDevice  = ref(null)
 const deviceApps      = ref([])
 const deviceLicenses  = ref([])
 const detailTab       = ref('info')
+const addLoading      = ref(false)
+const addError        = ref('')
 
 // New device form
-const newDevice = ref({ deviceName:'', sn:'', imei:'', deviceModel:'', area:'', deviceSysType: 0 })
+const blankDevice = () => ({
+  deviceName: '',
+  sn: '',
+  imei: '',
+  mac: '',
+  deviceModel: '',
+  area: 'EUR',
+  deviceSysType: 0,
+  deviceDesc: '',
+  tagIds: [],
+})
+const newDevice = ref(blankDevice())
 
 async function loadDevices() {
   loading.value = true
@@ -35,8 +61,16 @@ async function loadDevices() {
 
 async function loadMeta() {
   try {
-    const g = await rcmsApi.getGroups().catch(() => [])
+    const [g, m] = await Promise.all([
+      rcmsApi.getGroups().catch(() => []),
+      rcmsApi.getModels().catch(() => []),
+    ])
     groups.value = Array.isArray(g) ? g : (g?.list || [])
+    const modelList = Array.isArray(m) ? m : (m?.list || m?.records || [])
+    const names = modelList
+      .map(item => item.deviceModel || item.model || item.modelName || item.name || item)
+      .filter(Boolean)
+    if (names.length) models.value = [...new Set(names.map(String))].sort()
   } catch(e) {}
 }
 
@@ -57,12 +91,41 @@ async function openDetail(device) {
 }
 
 async function addDevice() {
+  addError.value = ''
+  const payload = {
+    ...newDevice.value,
+    deviceName: newDevice.value.deviceName.trim(),
+    sn: newDevice.value.sn.trim(),
+    imei: newDevice.value.imei.trim(),
+    mac: newDevice.value.mac.trim(),
+    deviceModel: newDevice.value.deviceModel.trim(),
+    area: newDevice.value.area.trim(),
+    deviceDesc: newDevice.value.deviceDesc.trim(),
+    deviceSysType: Number(newDevice.value.deviceSysType ?? 0),
+  }
+  if (!payload.deviceName) { addError.value = 'Device name is required.'; return }
+  if (!payload.sn) { addError.value = 'Serial Number is required.'; return }
+  if (!/^[a-zA-Z0-9]{1,50}$/.test(payload.sn)) { addError.value = 'SN supports letters and numbers only.'; return }
+  if (!payload.imei && !payload.mac) { addError.value = 'Enter at least one hardware identifier: IMEI or MAC.'; return }
+  if (payload.imei && !/^\d{14,17}$/.test(payload.imei)) { addError.value = 'IMEI must be 14-17 digits.'; return }
+  if (!payload.deviceModel) { addError.value = 'Device model is required.'; return }
+  if (models.value.length && !models.value.includes(payload.deviceModel)) {
+    addError.value = 'Select an exact model from the RCMS model list.'
+    return
+  }
+  if (!rcmsAreas.some(area => area.value === payload.area)) {
+    addError.value = 'Select a valid RCMS device area. RCMS submits area codes such as EUR, EA, NA, SA, and AU.'
+    return
+  }
+
+  addLoading.value = true
   try {
-    await rcmsApi.addDevice({ ...newDevice.value })
+    await rcmsApi.addDevice(payload)
     showAddModal.value = false
-    newDevice.value = { deviceName:'', sn:'', imei:'', deviceModel:'', area:'', deviceSysType: 0 }
+    newDevice.value = blankDevice()
     await loadDevices()
-  } catch(e) { alert('Error: ' + e.message) }
+  } catch(e) { addError.value = e.message }
+  finally { addLoading.value = false }
 }
 
 async function deleteDevice(sn) {
@@ -81,7 +144,7 @@ async function reboot(sn) {
   } catch(e) { alert('Error: ' + e.message) }
 }
 
-const filteredDevices = () => {
+const filteredDevices = computed(() => {
   if (!search.value.trim()) return devices.value
   const q = search.value.toLowerCase()
   return devices.value.filter(d =>
@@ -89,9 +152,19 @@ const filteredDevices = () => {
     String(d.deviceName||'').toLowerCase().includes(q) ||
     String(d.deviceModel||'').toLowerCase().includes(q)
   )
+})
+
+function onlineStatus(device) {
+  return Number(device?.deviceOnLineStatus ?? device?.onlineStatus ?? device?.status ?? -1)
 }
 
-function statusColor(v) { return v === 1 ? '#22c55e' : '#ef4444' }
+function statusColor(device) {
+  return onlineStatus(device) === 1 ? '#22c55e' : '#ef4444'
+}
+
+function statusLabel(device) {
+  return onlineStatus(device) === 1 ? 'Online' : 'Offline'
+}
 
 onMounted(async () => { await Promise.all([loadDevices(), loadMeta()]) })
 </script>
@@ -108,7 +181,7 @@ onMounted(async () => { await Promise.all([loadDevices(), loadMeta()]) })
           <span class="input-group-text bg-dark border-secondary text-secondary"><i class="bi bi-search"></i></span>
           <input v-model="search" class="form-control bg-dark border-secondary text-white" placeholder="Search SN / Name..."/>
         </div>
-        <button class="btn btn-sm btn-success" @click="showAddModal=true">
+        <button class="btn btn-sm btn-success" @click="addError=''; showAddModal=true">
           <i class="bi bi-plus-circle me-1"></i>Add Device
         </button>
         <button class="btn btn-sm btn-outline-secondary" @click="loadDevices" :disabled="loading">
@@ -128,7 +201,7 @@ onMounted(async () => { await Promise.all([loadDevices(), loadMeta()]) })
             <div class="spinner-border text-primary mb-2"></div>
             <p class="text-secondary">Loading devices...</p>
           </div>
-          <div v-else-if="filteredDevices().length===0" class="text-center py-5 text-secondary">
+          <div v-else-if="filteredDevices.length===0" class="text-center py-5 text-secondary">
             <i class="bi bi-hdd-network fs-1"></i>
             <p class="mt-2">No devices found</p>
           </div>
@@ -146,17 +219,17 @@ onMounted(async () => { await Promise.all([loadDevices(), loadMeta()]) })
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="d in filteredDevices()" :key="d.sn" style="border-color: rgba(255,255,255,0.05)">
+                <tr v-for="d in filteredDevices" :key="d.sn" style="border-color: rgba(255,255,255,0.05)">
                   <td class="font-monospace text-info">{{ d.sn }}</td>
                   <td>{{ d.deviceName || '—' }}</td>
                   <td class="text-secondary">{{ d.deviceModel || '—' }}</td>
                   <td>
                     <span class="badge rounded-pill"
-                          :style="`background:${statusColor(d.deviceOnLineStatus)}22; color:${statusColor(d.deviceOnLineStatus)}`">
-                      {{ d.deviceOnLineStatus === 1 ? 'Online' : 'Offline' }}
+                          :style="`background:${statusColor(d)}22; color:${statusColor(d)}`">
+                      {{ statusLabel(d) }}
                     </span>
                   </td>
-                  <td class="text-secondary">{{ d.deviceGroup || '—' }}</td>
+                  <td class="text-secondary">{{ d.deviceGroup || d.groupName || '—' }}</td>
                   <td class="text-secondary small">{{ d.createTime ? new Date(d.createTime).toLocaleDateString() : '—' }}</td>
                   <td>
                     <div class="d-flex gap-1">
@@ -201,6 +274,9 @@ onMounted(async () => { await Promise.all([loadDevices(), loadMeta()]) })
             <button class="btn-close btn-close-white" @click="showAddModal=false"></button>
           </div>
           <div class="modal-body">
+            <div v-if="addError" class="alert alert-danger py-2 small">
+              <i class="bi bi-exclamation-triangle me-1"></i>{{ addError }}
+            </div>
             <div class="mb-3">
               <label class="form-label text-secondary small">Device Name</label>
               <input v-model="newDevice.deviceName" class="form-control bg-dark border-secondary text-white" placeholder="e.g. Sensor-01"/>
@@ -214,6 +290,10 @@ onMounted(async () => { await Promise.all([loadDevices(), loadMeta()]) })
               <input v-model="newDevice.imei" class="form-control bg-dark border-secondary text-white font-monospace" placeholder="15-digit IMEI"/>
             </div>
             <div class="mb-3">
+              <label class="form-label text-secondary small">MAC</label>
+              <input v-model="newDevice.mac" class="form-control bg-dark border-secondary text-white font-monospace" placeholder="Optional if IMEI is provided"/>
+            </div>
+            <div class="mb-3">
               <label class="form-label text-secondary small">Model</label>
               <select v-model="newDevice.deviceModel" class="form-select bg-dark border-secondary text-white">
                 <option value="">Select model...</option>
@@ -221,13 +301,38 @@ onMounted(async () => { await Promise.all([loadDevices(), loadMeta()]) })
               </select>
             </div>
             <div class="mb-3">
-              <label class="form-label text-secondary small">Area</label>
-              <input v-model="newDevice.area" class="form-control bg-dark border-secondary text-white" placeholder="e.g. EA"/>
+              <label class="form-label text-secondary small">RCMS Device Area</label>
+              <select v-model="newDevice.area" class="form-select bg-dark border-secondary text-white">
+                <option v-for="area in rcmsAreas" :key="area.value" :value="area.value">
+                  {{ area.label }}
+                </option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label text-secondary small">Device OS</label>
+              <div class="btn-group w-100" role="group">
+                <button
+                  v-for="os in deviceOsOptions"
+                  :key="os.value"
+                  type="button"
+                  :class="['btn btn-sm', Number(newDevice.deviceSysType) === os.value ? 'btn-primary' : 'btn-outline-secondary']"
+                  @click="newDevice.deviceSysType = os.value"
+                >
+                  {{ os.label }}
+                </button>
+              </div>
+            </div>
+            <div class="mb-0">
+              <label class="form-label text-secondary small">Description</label>
+              <textarea v-model="newDevice.deviceDesc" class="form-control bg-dark border-secondary text-white" rows="2" maxlength="200" placeholder="Optional"></textarea>
             </div>
           </div>
           <div class="modal-footer border-secondary">
             <button class="btn btn-secondary" @click="showAddModal=false">Cancel</button>
-            <button class="btn btn-success" @click="addDevice">Add Device</button>
+            <button class="btn btn-success" @click="addDevice" :disabled="addLoading">
+              <span v-if="addLoading" class="spinner-border spinner-border-sm me-1"></span>
+              {{ addLoading ? 'Registering...' : 'Add Device' }}
+            </button>
           </div>
         </div>
       </div>
@@ -259,8 +364,8 @@ onMounted(async () => { await Promise.all([loadDevices(), loadMeta()]) })
                 ['Serial Number', selectedDevice?.sn],
                 ['Device Name', selectedDevice?.deviceName],
                 ['Model', selectedDevice?.deviceModel],
-                ['Status', selectedDevice?.deviceOnLineStatus===1 ? '🟢 Online' : '🔴 Offline'],
-                ['Group', selectedDevice?.deviceGroup],
+                ['Status', statusLabel(selectedDevice)],
+                ['Group', selectedDevice?.deviceGroup || selectedDevice?.groupName],
                 ['Firmware', selectedDevice?.deviceFirmWareVersion],
                 ['Description', selectedDevice?.deviceDesc],
                 ['Created', selectedDevice?.createTime ? new Date(selectedDevice.createTime).toLocaleString() : '—'],

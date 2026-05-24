@@ -38,6 +38,7 @@ async function initLeaflet() {
     attribution: '© OpenStreetMap © CARTO',
     maxZoom: 19,
   }).addTo(map)
+  setTimeout(() => map?.invalidateSize(), 100)
 }
 
 async function loadDevices() {
@@ -57,21 +58,30 @@ async function loadGpsTrack() {
   clearMap()
 
   try {
-    const [trackData, liveData] = await Promise.all([
+    const gpsParams = {
+      pageNum: pageNum.value,
+      pageSize: pageSize.value,
+      beginTime: beginTime.value,
+      endTime: endTime.value,
+    }
+    const [trackData, liveData, locationData] = await Promise.all([
       rcmsApi.getGpsReport(selectedSn.value, {
-        pageNum: pageNum.value, pageSize: pageSize.value,
-        beginTime: beginTime.value, endTime: endTime.value,
+        ...gpsParams,
       }).catch(() => null),
-      rcmsApi.getDeviceGpsData(selectedSn.value).catch(() => null),
+      rcmsApi.getDeviceGpsData(selectedSn.value, {
+        pageNum: pageNum.value,
+        pageSize: pageSize.value,
+      }).catch(() => null),
+      rcmsApi.getDeviceLocationInfo(selectedSn.value).catch(() => null),
     ])
 
-    const points = Array.isArray(trackData) ? trackData : (trackData?.list || trackData?.records || [])
+    const points = normalizeGpsList(trackData)
     gpsPoints.value = points
 
-    if (liveData) liveGps.value = liveData
+    liveGps.value = normalizeGpsPoint(locationData) || latestGpsPoint(liveData) || points[points.length - 1] || null
 
     await nextTick()
-    renderMap(points, liveData)
+    renderMap(points, liveGps.value)
   } catch(e) {
     error.value = e.message
   } finally {
@@ -86,13 +96,42 @@ function clearMap() {
   if (trackLine) { map.removeLayer(trackLine); trackLine = null }
 }
 
+function unwrapList(data) {
+  return Array.isArray(data) ? data : (data?.list || data?.records || data?.data || [])
+}
+
+function parseCoordinate(value) {
+  const coord = Number(value)
+  return Number.isFinite(coord) ? coord : null
+}
+
+function normalizeGpsPoint(point) {
+  if (!point) return null
+  const lat = parseCoordinate(point.lat ?? point.latitude ?? point.gpsLatitude)
+  const lng = parseCoordinate(point.lng ?? point.lon ?? point.longitude ?? point.gpsLongitude)
+  if (lat == null || lng == null) return null
+  return {
+    ...point,
+    lat,
+    lng,
+    time: point.time ?? point.timestamp ?? point.gpsUpdateTime ?? point.updateTime ?? point.createTime ?? null,
+  }
+}
+
+function normalizeGpsList(data) {
+  return unwrapList(data).map(normalizeGpsPoint).filter(Boolean)
+}
+
+function latestGpsPoint(data) {
+  const points = normalizeGpsList(data)
+  return points[points.length - 1] || normalizeGpsPoint(data)
+}
+
 function renderMap(points, live) {
   if (!map || !L) return
   clearMap()
 
-  const latLngs = points
-    .filter(p => p.lat != null && p.lng != null)
-    .map(p => [parseFloat(p.lat), parseFloat(p.lng)])
+  const latLngs = points.map(p => [p.lat, p.lng])
 
   if (latLngs.length > 1) {
     trackLine = L.polyline(latLngs, { color: '#60a5fa', weight: 3, opacity: 0.8 }).addTo(map)
@@ -104,11 +143,13 @@ function renderMap(points, live) {
     markers.push(startM)
 
     map.fitBounds(trackLine.getBounds(), { padding: [40, 40] })
+  } else if (latLngs.length === 1) {
+    map.setView(latLngs[0], 14)
   }
 
   // Live position (blue pulsing)
-  const liveCoord = live?.lat && live?.lng
-    ? [parseFloat(live.lat), parseFloat(live.lng)]
+  const liveCoord = live?.lat != null && live?.lng != null
+    ? [live.lat, live.lng]
     : latLngs[latLngs.length - 1]
 
   if (liveCoord) {
@@ -122,6 +163,8 @@ function renderMap(points, live) {
     markers.push(liveMarker)
     if (!latLngs.length) map.setView(liveCoord, 14)
   }
+
+  map.invalidateSize()
 }
 
 function formatTs(ts) {

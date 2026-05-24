@@ -46,8 +46,16 @@ async function reboot(sn) {
 onMounted(() => { loadAll(); timer = setInterval(loadAll, 30_000) })
 onUnmounted(() => clearInterval(timer))
 
-function statusColor(online) {
-  return online === 1 ? '#22c55e' : '#ef4444'
+function onlineStatus(device) {
+  return Number(device?.deviceOnLineStatus ?? device?.onlineStatus ?? device?.status ?? -1)
+}
+
+function statusColor(device) {
+  return onlineStatus(device) === 1 ? '#22c55e' : '#ef4444'
+}
+
+function statusLabel(device) {
+  return onlineStatus(device) === 1 ? 'Online' : 'Offline'
 }
 </script>
 
@@ -143,13 +151,13 @@ function statusColor(online) {
                   <td class="text-secondary">{{ d.deviceModel || '—' }}</td>
                   <td>
                     <span class="badge rounded-pill"
-                          :style="`background:${statusColor(d.deviceOnLineStatus)}22; color:${statusColor(d.deviceOnLineStatus)}`">
-                      <i :class="['bi me-1', d.deviceOnLineStatus===1 ? 'bi-circle-fill' : 'bi-circle']"
+                          :style="`background:${statusColor(d)}22; color:${statusColor(d)}`">
+                      <i :class="['bi me-1', onlineStatus(d) === 1 ? 'bi-circle-fill' : 'bi-circle']"
                          style="font-size:8px; vertical-align: middle;"></i>
-                      {{ d.deviceOnLineStatus === 1 ? 'Online' : 'Offline' }}
+                      {{ statusLabel(d) }}
                     </span>
                   </td>
-                  <td class="text-secondary">{{ d.deviceGroup || '—' }}</td>
+                  <td class="text-secondary">{{ d.deviceGroup || d.groupName || '—' }}</td>
                   <td>
                     <button class="btn btn-sm btn-outline-warning" @click="reboot(d.sn)" title="Reboot">
                       <i class="bi bi-arrow-clockwise"></i>

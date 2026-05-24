@@ -10,6 +10,7 @@ const error     = ref('')
 const alerts    = ref([])
 const groups    = ref([])
 const devices   = ref([])
+const loaded     = ref(false)
 
 // Filters
 const mode        = ref('device')   // 'device' | 'group'
@@ -29,30 +30,66 @@ async function init() {
       rcmsApi.getGroups().catch(() => []),
       rcmsApi.getDevices(1, 50).catch(() => []),
     ])
-    groups.value  = Array.isArray(grps) ? grps : (grps?.list || [])
+    const apiGroups = Array.isArray(grps) ? grps : (grps?.list || grps?.records || [])
     const devArr  = Array.isArray(devs) ? devs : (devs?.list || devs?.records || [])
     devices.value = devArr
     if (devArr.length) selectedSn.value = devArr[0].sn
+    const deviceGroups = devArr
+      .map(d => ({
+        groupId: d.groupId || d.deviceGroupId,
+        groupName: d.groupName || d.deviceGroup,
+      }))
+      .filter(g => g.groupId)
+    const mergedGroups = [...apiGroups, ...deviceGroups]
+    groups.value = Array.from(
+      new Map(mergedGroups.map(g => [g.groupId || g.id, g])).values()
+    )
     if (groups.value.length) selectedGid.value = groups.value[0].groupId || groups.value[0].id
   } catch(e) { error.value = e.message }
+}
+
+function unwrapAlerts(data) {
+  return Array.isArray(data) ? data : (data?.list || data?.records || data?.data || [])
+}
+
+function normalizeAlert(alert, fallbackSn = '') {
+  return {
+    ...alert,
+    sn: alert.sn || alert.deviceSn || alert.deviceSN || fallbackSn,
+    time: alert.time || alert.alertTime || alert.createTime || alert.timestamp || alert.updateTime,
+    type: alert.alertType || alert.type || alert.alertName || alert.name || alert.eventType,
+    level: alert.level || alert.alertLevel || alert.severity || alert.alarmLevel,
+    message: alert.alertMsg || alert.message || alert.content || alert.details || alert.description || alert.alarmContent,
+    status: alert.status ?? alert.alertStatus ?? alert.state,
+  }
 }
 
 async function loadAlerts() {
   loading.value = true
   error.value   = ''
   alerts.value  = []
+  loaded.value   = false
   try {
     const params = { pageNum: pageNum.value, pageSize: pageSize.value, beginTime: beginTime.value, endTime: endTime.value }
     let data
     if (mode.value === 'device' && selectedSn.value) {
       data = await rcmsApi.getDeviceAlertLogs(selectedSn.value, params)
+      alerts.value = unwrapAlerts(data).map(a => normalizeAlert(a, selectedSn.value))
     } else if (mode.value === 'group' && selectedGid.value) {
       data = await rcmsApi.getGroupAlertLogs(selectedGid.value, params)
+      alerts.value = unwrapAlerts(data).map(a => normalizeAlert(a))
+    } else if (mode.value === 'device' && devices.value.length) {
+      const results = await Promise.all(
+        devices.value.map(d => rcmsApi.getDeviceAlertLogs(d.sn, params).catch(() => []))
+      )
+      alerts.value = results.flatMap((result, index) =>
+        unwrapAlerts(result).map(a => normalizeAlert(a, devices.value[index]?.sn))
+      )
     }
-    alerts.value = Array.isArray(data) ? data : (data?.list || data?.records || [])
   } catch(e) {
     error.value = e.message
   } finally {
+    loaded.value = true
     loading.value = false
   }
 }
@@ -66,9 +103,27 @@ function severityColor(level) {
   return '#6b7280'
 }
 
+function severityLabel(alert) {
+  return alert.level || 'Info'
+}
+
+function alertStatusLabel(alert) {
+  const status = String(alert.status ?? '').toLowerCase()
+  if (status === '1' || status.includes('resolv') || status.includes('clear')) return 'Resolved'
+  if (status === '0' || status === '-1' || status.includes('active')) return 'Active'
+  return alert.status || 'Active'
+}
+
+function alertStatusClass(alert) {
+  return alertStatusLabel(alert) === 'Resolved' ? 'bg-success' : 'bg-warning text-dark'
+}
+
 function formatTs(ts) {
   if (!ts) return '—'
-  return new Date(Number(ts)).toLocaleString()
+  const date = typeof ts === 'number' || /^\d+$/.test(String(ts))
+    ? new Date(Number(ts))
+    : new Date(ts)
+  return Number.isNaN(date.getTime()) ? String(ts) : date.toLocaleString()
 }
 
 onMounted(async () => { await init(); await loadAlerts() })
@@ -138,9 +193,10 @@ onMounted(async () => { await init(); await loadAlerts() })
             <div class="spinner-border text-warning mb-2"></div>
             <p class="text-secondary">Loading alerts...</p>
           </div>
-          <div v-else-if="alerts.length === 0" class="text-center py-5 text-secondary">
+          <div v-else-if="loaded && alerts.length === 0" class="text-center py-5 text-secondary">
             <i class="bi bi-bell-slash fs-1"></i>
             <p class="mt-2">No alerts found for selected period</p>
+            <p class="small mb-0">RCMS returned 0 alert records for the selected device/group.</p>
           </div>
           <div v-else class="table-responsive">
             <table class="table table-dark table-hover mb-0">
@@ -156,21 +212,21 @@ onMounted(async () => { await init(); await loadAlerts() })
               </thead>
               <tbody>
                 <tr v-for="(a, i) in alerts" :key="i" style="border-color: rgba(255,255,255,0.05)">
-                  <td class="text-secondary small text-nowrap">{{ formatTs(a.time || a.alertTime || a.createTime) }}</td>
-                  <td class="font-monospace text-info small">{{ a.sn || a.deviceSn || '—' }}</td>
-                  <td>{{ a.alertType || a.type || '—' }}</td>
+                  <td class="text-secondary small text-nowrap">{{ formatTs(a.time) }}</td>
+                  <td class="font-monospace text-info small">{{ a.sn || '—' }}</td>
+                  <td>{{ a.type || '—' }}</td>
                   <td>
                     <span class="badge rounded-pill px-2"
-                          :style="`background:${severityColor(a.level||a.alertLevel)}22; color:${severityColor(a.level||a.alertLevel)}`">
-                      {{ a.level || a.alertLevel || '—' }}
+                          :style="`background:${severityColor(a.level)}22; color:${severityColor(a.level)}`">
+                      {{ severityLabel(a) }}
                     </span>
                   </td>
                   <td class="small" style="max-width:300px; white-space: normal;">
-                    {{ a.alertMsg || a.message || a.content || '—' }}
+                    {{ a.message || '—' }}
                   </td>
                   <td>
-                    <span class="badge" :class="a.status === 1 ? 'bg-success' : 'bg-secondary'">
-                      {{ a.status === 1 ? 'Resolved' : 'Active' }}
+                    <span class="badge" :class="alertStatusClass(a)">
+                      {{ alertStatusLabel(a) }}
                     </span>
                   </td>
                 </tr>

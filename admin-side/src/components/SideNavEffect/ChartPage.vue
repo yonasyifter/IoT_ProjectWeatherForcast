@@ -722,10 +722,10 @@ onBeforeUnmount(() => {
     <!-- Charts Grid with Axes -->
     <div v-if="chartData.length" class="charts-grid">
       <!-- Temperature Chart -->
-      <div class="panel chart-panel">
+      <div class="panel chart-panel chart-temp">
         <div class="chart-header">
           <h3 class="chart-title"><i class="bi bi-thermometer-half"></i> Temperature Over Time</h3>
-          <button class="btn-expand" @click="toggleFullscreen('temp')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
+          <button class="btn-expand" @click.stop="toggleFullscreen('temp')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
         </div>
         <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan" @click="toggleFullscreen('temp')">
           <svg :viewBox="`0 0 ${svgWidth} ${svgHeight}`">
@@ -758,10 +758,10 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Humidity Chart -->
-      <div class="panel chart-panel">
+      <div class="panel chart-panel chart-hum">
         <div class="chart-header">
           <h3 class="chart-title"><i class="bi bi-droplet-half"></i> Humidity Over Time</h3>
-          <button class="btn-expand" @click="toggleFullscreen('hum')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
+          <button class="btn-expand" @click.stop="toggleFullscreen('hum')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
         </div>
         <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan">
           <svg :viewBox="`0 0 ${svgWidth} ${svgHeight}`">
@@ -794,10 +794,10 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Pressure Chart -->
-      <div class="panel chart-panel">
+      <div class="panel chart-panel chart-pres">
         <div class="chart-header">
           <h3 class="chart-title"><i class="bi bi-speedometer2"></i> Pressure Over Time</h3>
-          <button class="btn-expand" @click="toggleFullscreen('pres')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
+          <button class="btn-expand" @click.stop="toggleFullscreen('pres')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
         </div>
         <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan" @click="toggleFullscreen('pres')">
           <svg :viewBox="`0 0 ${svgWidth} ${svgHeight}`">
@@ -830,10 +830,10 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Noise Chart -->
-      <div class="panel chart-panel">
+      <div class="panel chart-panel chart-noise">
         <div class="chart-header">
           <h3 class="chart-title"><i class="bi bi-soundwave"></i> Noise Over Time</h3>
-          <button class="btn-expand" @click="toggleFullscreen('noise')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
+          <button class="btn-expand" @click.stop="toggleFullscreen('noise')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
         </div>
         <div class="chart-wrap" @wheel="handleWheel" @mousedown="startPan" @click="toggleFullscreen('noise')">
           <svg :viewBox="`0 0 ${svgWidth} ${svgHeight}`">
@@ -919,7 +919,11 @@ onBeforeUnmount(() => {
 .viz-btn:hover { box-shadow: 0 0 12px rgba(49, 130, 206, 0.45); transform: translateY(-1px); }
 .viz-btn.active { background: #3182ce; border: 2px solid #63b3ed; font-weight: 800; }
 .viz-num { background: rgba(0,0,0,0.25); padding: 2px 8px; border-radius: 4px; font-weight: 900; font-size: 12px; }
-.charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(560px, 1fr)); gap: 20px; }
+.charts-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }
+.chart-temp { order: 1; }
+.chart-pres { order: 2; }
+.chart-hum { order: 3; }
+.chart-noise { order: 4; }
 .chart-panel { transition: box-shadow 0.2s ease; }
 .chart-panel:hover { box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
 .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
@@ -941,14 +945,15 @@ onBeforeUnmount(() => {
 .empty-text { color: #a0aec0; font-size: 18px; margin: 0; }
 
 /* Fullscreen overlay */
-.fullscreen-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 9999; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.3s ease; }
+.fullscreen-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 28px; animation: fadeIn 0.3s ease; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-.fullscreen-chart-wrapper { width: 95%; max-width: 1600px; height: 90%; position: relative; }
+.fullscreen-chart-wrapper { width: min(96vw, 1640px); height: min(92vh, 920px); position: relative; display: flex; align-items: center; justify-content: center; }
 .close-fullscreen { position: absolute; top: -40px; right: 0; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: #fff; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 18px; transition: all 0.2s; z-index: 10000; }
 .close-fullscreen:hover { background: rgba(255,255,255,0.2); transform: scale(1.1); }
-.fullscreen-chart { width: 1000px; height: 1000px; background: linear-gradient(135deg, #1a1f3a 0%, #0f1419 100%); border-radius: 12px; padding: 30px; overflow: hidden; }
-.fs-chart-title { color: #fff; font-size: 28px; margin-bottom: 20px; }
-.fs-chart-wrap { height: calc(100% - 60px); position: relative; }
+.fullscreen-chart { width: 100%; height: 100%; background: linear-gradient(135deg, #1a1f3a 0%, #0f1419 100%); border-radius: 12px; padding: 30px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 28px 80px rgba(0,0,0,0.65); border: 1px solid rgba(255,255,255,0.12); }
+.fs-chart-title { color: #fff; font-size: clamp(20px, 2vw, 28px); margin: 0 0 18px; flex: 0 0 auto; }
+.fs-chart-wrap { flex: 1; min-height: 0; position: relative; }
+.fs-chart-wrap svg { width: 100%; height: 100%; display: block; }
 .fs-tooltip { position: absolute; bottom: 30px; left: 30px; background: rgba(0,0,0,0.9); padding: 16px 20px; border-radius: 10px; pointer-events: none; }
 .fs-tooltip-temp { border: 2px solid #ef4444; }
 .fs-tooltip-hum { border: 2px solid #3b82f6; }
@@ -960,4 +965,7 @@ onBeforeUnmount(() => {
 .fs-tooltip-pres .fs-tooltip-value { color: #10b981; }
 .fs-tooltip-noise .fs-tooltip-value { color: #f59e0b; }
 .fs-tooltip-time { font-size: 14px; color: #a0aec0; }
+@media (max-width: 1200px) {
+  .charts-grid { grid-template-columns: 1fr; }
+}
 </style>

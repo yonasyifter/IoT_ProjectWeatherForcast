@@ -18,6 +18,7 @@ from app.database import init_firebase
 from app.routes.auth import router as auth_router
 from app.routes.crew import router as crew_router
 from app.routes.rag import router as rag_router
+from app.routes.rcms import router as rcms_router
 from app.routes.weather import router as weather_router
 
 
@@ -64,6 +65,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(weather_router, prefix="/api/weather", tags=["Weather"])
 app.include_router(crew_router,    prefix="/api/crew",    tags=["AI Assistant"])
+app.include_router(rcms_router,    prefix="/api/rcms",    tags=["RCMS OpenAPI"])
 app.include_router(rag_router,     prefix="/api/rag",     tags=["RAG Assistant"])
 
 
