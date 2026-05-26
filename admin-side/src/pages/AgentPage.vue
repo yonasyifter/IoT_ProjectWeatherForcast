@@ -206,7 +206,35 @@
 
           <!-- 2. Empty state -->
           <div v-else-if="!response && !reportContent" key="empty" class="ap-empty-state">
-            <div class="ap-empty-orb"></div>
+            <div class="ap-analysis-visual" aria-hidden="true">
+              <div class="ap-analysis-grid"></div>
+              <div class="ap-analysis-sweep"></div>
+              <div class="ap-analysis-card ap-analysis-card-main">
+                <div class="ap-analysis-card-head">
+                  <span></span><span></span><span></span>
+                </div>
+                <div class="ap-analysis-wave">
+                  <span v-for="i in 18" :key="i" :style="{ '--bar': i }"></span>
+                </div>
+                <div class="ap-analysis-readings">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </div>
+              <div class="ap-analysis-node node-a"></div>
+              <div class="ap-analysis-node node-b"></div>
+              <div class="ap-analysis-node node-c"></div>
+              <div class="ap-analysis-connection connection-a"></div>
+              <div class="ap-analysis-connection connection-b"></div>
+              <div class="ap-analysis-focus">
+                <svg width="42" height="42" viewBox="0 0 42 42" fill="none">
+                  <path d="M12 7H8a1 1 0 0 0-1 1v4M30 7h4a1 1 0 0 1 1 1v4M12 35H8a1 1 0 0 1-1-1v-4M30 35h4a1 1 0 0 0 1-1v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M13 22.5l4.5-4.5 5 5 6.5-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="21" cy="21" r="15" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2.5 4"/>
+                </svg>
+              </div>
+            </div>
             <p class="ap-empty-title">Ready to analyse</p>
             <p class="ap-empty-sub">Select a capability and ask a question.<br>The AI crew will query live sensor data, RCMS device health,<br>and InfluxDB history to answer.</p>
             <div class="ap-empty-chips">
@@ -2238,14 +2266,128 @@ function weatherConfidencePercent (payload) {
   justify-content: center; height: 100%; text-align: center;
   padding: 40px 20px; gap: 12px;
 }
-.ap-empty-orb {
-  width: 80px; height: 80px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #1d4ed8, #1e3a5f);
-  box-shadow: 0 0 40px rgba(59,130,246,0.2);
-  margin-bottom: 8px;
-  animation: orb-float 4s ease-in-out infinite;
+.ap-analysis-visual {
+  position: relative;
+  width: min(100%, 330px);
+  height: 168px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid rgba(96,165,250,0.28);
+  background:
+    radial-gradient(circle at 22% 28%, rgba(16,185,129,0.22), transparent 28%),
+    radial-gradient(circle at 80% 18%, rgba(14,165,233,0.2), transparent 24%),
+    linear-gradient(145deg, rgba(8,18,32,0.96), rgba(12,28,47,0.92));
+  box-shadow: 0 24px 70px rgba(4,10,22,0.48), inset 0 1px 0 rgba(255,255,255,0.06);
+  animation: analysis-drift 8s ease-in-out infinite;
 }
-@keyframes orb-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+.ap-analysis-grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(125,166,214,0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125,166,214,0.1) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(180deg, rgba(0,0,0,0.82), rgba(0,0,0,0.22));
+  animation: analysis-grid-shift 14s linear infinite;
+}
+.ap-analysis-sweep {
+  position: absolute; inset: -30% 0;
+  width: 46%;
+  background: linear-gradient(90deg, transparent, rgba(96,165,250,0.2), rgba(45,212,191,0.22), transparent);
+  filter: blur(1px);
+  transform: translateX(-120%) skewX(-15deg);
+  animation: analysis-scan 7s ease-in-out infinite;
+}
+.ap-analysis-card {
+  position: absolute;
+  border: 1px solid rgba(148,190,233,0.24);
+  background: rgba(8,18,32,0.72);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.ap-analysis-card-main {
+  left: 48px; right: 44px; top: 32px; height: 94px;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.ap-analysis-card-head { display: flex; gap: 6px; margin-bottom: 14px; }
+.ap-analysis-card-head span {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(96,165,250,0.55);
+}
+.ap-analysis-card-head span:nth-child(2) { background: rgba(45,212,191,0.55); }
+.ap-analysis-card-head span:nth-child(3) { background: rgba(16,185,129,0.5); }
+.ap-analysis-wave {
+  height: 36px;
+  display: grid;
+  grid-template-columns: repeat(18, 1fr);
+  align-items: end;
+  gap: 4px;
+}
+.ap-analysis-wave span {
+  display: block;
+  min-height: 8px;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, #67e8f9, #3b82f6);
+  opacity: 0.68;
+  height: calc(10px + (var(--bar) % 7) * 4px);
+  animation: analysis-bar-breathe 5.2s ease-in-out infinite;
+  animation-delay: calc(var(--bar) * -0.16s);
+}
+.ap-analysis-readings { display: flex; gap: 8px; margin-top: 12px; }
+.ap-analysis-readings span {
+  height: 5px; border-radius: 999px;
+  background: rgba(122,148,176,0.38);
+}
+.ap-analysis-readings span:nth-child(1) { width: 42%; }
+.ap-analysis-readings span:nth-child(2) { width: 24%; background: rgba(45,212,191,0.42); }
+.ap-analysis-readings span:nth-child(3) { width: 18%; }
+.ap-analysis-node {
+  position: absolute;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #0f172a;
+  border: 2px solid #60a5fa;
+  box-shadow: 0 0 0 6px rgba(96,165,250,0.08), 0 0 20px rgba(96,165,250,0.34);
+  animation: analysis-node-pulse 4.8s ease-in-out infinite;
+}
+.ap-analysis-node::after {
+  content: '';
+  position: absolute; inset: 3px;
+  border-radius: inherit;
+  background: #5eead4;
+}
+.node-a { left: 24px; top: 42px; }
+.node-b { right: 26px; top: 40px; animation-delay: -1.3s; }
+.node-c { left: 52%; bottom: 20px; animation-delay: -2.6s; }
+.ap-analysis-connection {
+  position: absolute;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(94,234,212,0.56), transparent);
+  transform-origin: left center;
+  animation: analysis-link-glow 5.8s ease-in-out infinite;
+}
+.connection-a { left: 40px; top: 50px; width: 76px; transform: rotate(10deg); }
+.connection-b { right: 42px; top: 51px; width: 74px; transform: rotate(169deg); animation-delay: -2s; }
+.ap-analysis-focus {
+  position: absolute;
+  right: 26px; bottom: 18px;
+  width: 54px; height: 54px;
+  display: flex; align-items: center; justify-content: center;
+  color: #93c5fd;
+  border-radius: 8px;
+  background: rgba(6,11,20,0.54);
+  animation: analysis-focus-float 6s ease-in-out infinite;
+}
+@keyframes analysis-drift { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+@keyframes analysis-grid-shift { from{background-position:0 0} to{background-position:28px 28px} }
+@keyframes analysis-scan {
+  0%, 24% { transform: translateX(-125%) skewX(-15deg); opacity: 0; }
+  42%, 70% { opacity: 1; }
+  88%, 100% { transform: translateX(260%) skewX(-15deg); opacity: 0; }
+}
+@keyframes analysis-bar-breathe { 0%,100%{transform:scaleY(0.72);opacity:0.5} 50%{transform:scaleY(1.08);opacity:0.95} }
+@keyframes analysis-node-pulse { 0%,100%{box-shadow:0 0 0 5px rgba(96,165,250,0.08),0 0 20px rgba(96,165,250,0.3)} 50%{box-shadow:0 0 0 10px rgba(45,212,191,0.08),0 0 28px rgba(45,212,191,0.34)} }
+@keyframes analysis-link-glow { 0%,100%{opacity:0.35} 50%{opacity:0.95} }
+@keyframes analysis-focus-float { 0%,100%{transform:translateY(0) rotate(0deg)} 50%{transform:translateY(-4px) rotate(2deg)} }
 .ap-empty-title { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin: 0; }
 .ap-empty-sub { font-size: 0.82rem; color: var(--text-secondary); margin: 0; line-height: 1.6; }
 .ap-empty-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 6px; }

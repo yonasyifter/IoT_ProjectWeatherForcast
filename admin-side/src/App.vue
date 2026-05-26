@@ -1,11 +1,13 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useAdminAuthStore } from '@/auth/adminAuthStore'
+import api from '@/utils/api.js'
 
 // Existing pages
 import SensorDashboardPage from './pages/SensorDashboardPage.vue'
 import GroupMembersPage    from './pages/GroupMembersPage.vue'
 import WeatherPage         from './pages/WeatherPage.vue'
+import WeatherAlerts       from './components/alert/Alerts.vue'
 import VisitorPage           from './components/visitor/visitor.vue'
 import HelpPage            from './pages/HelpPage.vue'
 import DocsPage            from './pages/DocsPage.vue'
@@ -19,8 +21,6 @@ import Sidebar             from './components/layout/SidebarNav.vue'
 
 // NEW RCMS pages
 import RcmsDashboardPage   from './pages/RcmsDashboardPage.vue'
-import RcmsAlertsPage      from './pages/RcmsAlertsPage.vue'
-import RcmsGpsPage         from './pages/RcmsGpsPage.vue'
 import RcmsDevicesPage     from './pages/RcmsDevicesPage.vue'
 
 // Auth view
@@ -28,8 +28,33 @@ import AdminLoginView from './views/AdminLoginView.vue'
 
 const store       = useAdminAuthStore()
 const currentPage = ref('dashboard')
+const digitalAlertCounts = ref({ critical: 0, warning: 0 })
+let alertCountTimer = null
 
-onMounted(async () => { await store.init() })
+async function fetchDigitalAlertCounts() {
+  try {
+    const data = await api.get('/api/weather/alert?limit=500')
+    const alerts = Array.isArray(data) ? data : []
+    digitalAlertCounts.value = {
+      critical: alerts.filter(alert => alert.alert_type === 'critical').length,
+      warning: alerts.filter(alert => alert.alert_type === 'warning').length,
+    }
+  } catch (error) {
+    digitalAlertCounts.value = { critical: 0, warning: 0 }
+  }
+}
+
+onMounted(async () => {
+  await store.init()
+  await fetchDigitalAlertCounts()
+  window.addEventListener('digital-alerts-updated', fetchDigitalAlertCounts)
+  alertCountTimer = setInterval(fetchDigitalAlertCounts, 30000)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('digital-alerts-updated', fetchDigitalAlertCounts)
+  if (alertCountTimer) clearInterval(alertCountTimer)
+})
 
 function navigateTo(page) { currentPage.value = page }
 
@@ -70,6 +95,13 @@ async function handleLogout() { await store.logout() }
               :class="['btn btn-sm', currentPage==='weather' ? 'btn-primary' : 'btn-outline-light']">
               <i class="bi bi-cloud-sun me-1"></i>{{ $t('sidebar.weather_map') }}
             </button>
+            <button @click="navigateTo('weather-alerts')"
+              :class="['btn btn-sm d-inline-flex align-items-center gap-1', currentPage==='weather-alerts' ? 'btn-primary' : 'btn-outline-light']">
+              <i class="bi bi-bell"></i>
+              <span>Digital Alerts</span>
+              <span class="badge rounded-pill bg-danger">{{ digitalAlertCounts.critical }}</span>
+              <span class="badge rounded-pill text-bg-warning">{{ digitalAlertCounts.warning }}</span>
+            </button>
             <button @click="navigateTo('visitor')"
               :class="['btn btn-sm', currentPage==='visitor' ? 'btn-primary' : 'btn-outline-light']">
               <i class="bi bi-people me-1"></i>Visitor Density
@@ -78,22 +110,18 @@ async function handleLogout() { await store.logout() }
             <!-- RCMS dropdown group -->
             <div class="btn-group">
               <button
-                :class="['btn btn-sm', ['rcms-dashboard','rcms-alerts','rcms-gps','rcms-devices'].includes(currentPage) ? 'btn-warning' : 'btn-outline-warning']"
+                :class="['btn btn-sm', ['rcms-dashboard','rcms-devices'].includes(currentPage) ? 'btn-warning' : 'btn-outline-warning']"
                 @click="navigateTo('rcms-dashboard')">
                 <i class="bi bi-router me-1"></i>RCMS
               </button>
               <button type="button"
-                :class="['btn btn-sm dropdown-toggle dropdown-toggle-split', ['rcms-dashboard','rcms-alerts','rcms-gps','rcms-devices'].includes(currentPage) ? 'btn-warning' : 'btn-outline-warning']"
+                :class="['btn btn-sm dropdown-toggle dropdown-toggle-split', ['rcms-dashboard','rcms-devices'].includes(currentPage) ? 'btn-warning' : 'btn-outline-warning']"
                 data-bs-toggle="dropdown">
                 <span class="visually-hidden">Toggle Dropdown</span>
               </button>
               <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end">
                 <li><button class="dropdown-item" @click="navigateTo('rcms-dashboard')">
                   <i class="bi bi-speedometer2 me-2"></i>Device Dashboard</button></li>
-                <li><button class="dropdown-item" @click="navigateTo('rcms-alerts')">
-                  <i class="bi bi-bell me-2"></i>Alerts & Alarms</button></li>
-                <li><button class="dropdown-item" @click="navigateTo('rcms-gps')">
-                  <i class="bi bi-geo-alt me-2"></i>GPS Tracking</button></li>
                 <li><button class="dropdown-item" @click="navigateTo('rcms-devices')">
                   <i class="bi bi-hdd-network me-2"></i>Device Management</button></li>
                 <li><hr class="dropdown-divider"></li>
@@ -122,6 +150,7 @@ async function handleLogout() { await store.logout() }
       <!-- Page content -->
       <SensorDashboardPage v-if="currentPage === 'dashboard'" />
       <WeatherPage         v-else-if="currentPage === 'weather'" />
+      <WeatherAlerts       v-else-if="currentPage === 'weather-alerts'" />
       <VisitorPage         v-else-if="currentPage === 'visitor'" />
       <GroupMembersPage    v-else-if="currentPage === 'members'" />
       <HelpPage            v-else-if="currentPage === 'help'" />
@@ -134,8 +163,6 @@ async function handleLogout() { await store.logout() }
 
       <!-- RCMS pages -->
       <RcmsDashboardPage   v-else-if="currentPage === 'rcms-dashboard'" />
-      <RcmsAlertsPage      v-else-if="currentPage === 'rcms-alerts'" />
-      <RcmsGpsPage         v-else-if="currentPage === 'rcms-gps'" />
       <RcmsDevicesPage     v-else-if="currentPage === 'rcms-devices'" />
     </div>
 

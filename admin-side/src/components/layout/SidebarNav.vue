@@ -9,8 +9,6 @@ const items = [
   { key: 'grid',           title: t('sidebar.sensor_dashboard') },
   { key: 'weather',        title: t('sidebar.weather_map') },
   { key: 'rcms-dashboard', title: t('sidebar.rcms_dashboard') },
-  { key: 'rcms-alerts',    title: t('sidebar.rcms_alerts') },
-  { key: 'rcms-gps',       title: t('sidebar.rcms_gps') },
   { key: 'rcms-devices',   title: t('sidebar.rcms_devices') },
   { key: 'agent',          title: t('sidebar.ai_agent') },
 ]
@@ -63,18 +61,6 @@ const items = [
           <circle cx="10" cy="12" r="1.2" fill="#fbbf24"/>
           <path d="M14 12h4" stroke="#fbbf24" stroke-width="1.5" stroke-linecap="round"/>
           <path d="M12 8V5M8 8V6M16 8V6" stroke="#fbbf24" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-
-        <!-- Alerts (bell) -->
-        <svg v-else-if="it.key==='rcms-alerts'" width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <path d="M12 2a7 7 0 0 0-7 7v3l-2 3h18l-2-3V9a7 7 0 0 0-7-7Z" stroke="#f87171" stroke-width="1.8"/>
-          <path d="M10 19a2 2 0 0 0 4 0" stroke="#f87171" stroke-width="1.8"/>
-        </svg>
-
-        <!-- GPS (location pin) -->
-        <svg v-else-if="it.key==='rcms-gps'" width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <path d="M12 2C8.686 2 6 4.686 6 8c0 4.5 6 13 6 13s6-8.5 6-13c0-3.314-2.686-6-6-6Z" stroke="#34d399" stroke-width="1.8"/>
-          <circle cx="12" cy="8" r="2" stroke="#34d399" stroke-width="1.8"/>
         </svg>
 
         <!-- Devices (hdd) -->

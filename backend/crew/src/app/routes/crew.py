@@ -351,7 +351,24 @@ def _extract_last_days(text: str) -> int | None:
 
 def _wants_chart(text: str) -> bool:
     q = text.lower()
-    return "chart" in q or "graph" in q or "bar" in q or "plot" in q
+    return any(term in q for term in ("chart", "graph", "bar", "plot", "pie", "doughnut", "donut", "radar", "scatter"))
+
+
+def _requested_chart_type(text: str, fallback: str = "bar") -> str:
+    q = text.lower()
+    if "pie" in q:
+        return "pie"
+    if "doughnut" in q or "donut" in q:
+        return "doughnut"
+    if "radar" in q:
+        return "radar"
+    if "scatter" in q:
+        return "scatter"
+    if "line" in q or "trend" in q:
+        return "line"
+    if "bar" in q:
+        return "bar"
+    return fallback
 
 
 def _to_float(value: Any) -> float | None:
@@ -404,13 +421,16 @@ def _latest_device_rows(device_data: str | None) -> list[dict[str, Any]]:
     return sorted(latest.values(), key=lambda item: str(item.get("device_id") or item.get("id") or ""))
 
 
-def _query_edge_resources_from_snapshot(device_data: str | None) -> dict[str, Any] | None:
+def _query_edge_resources_from_snapshot(device_data: str | None, chart_type: str = "bar") -> dict[str, Any] | None:
     latest_rows = _latest_device_rows(device_data)
     if not latest_rows:
         return None
 
     lines: list[str] = []
     chart_labels: list[str] = []
+    pie_labels: list[str] = []
+    pie_values: list[float] = []
+    pie_colors: list[str] = []
     ram_values: list[float | None] = []
     cpu_values: list[float | None] = []
 
@@ -464,30 +484,56 @@ def _query_edge_resources_from_snapshot(device_data: str | None) -> dict[str, An
         chart_labels.append(f"Device {device_id}")
         cpu_values.append(cpu_usage if cpu_usage is not None else cpu_temp)
         ram_values.append(round(ram_usage, 1) if ram_usage is not None else None)
+        if cpu_usage is not None:
+            pie_labels.append(f"Device {device_id} CPU")
+            pie_values.append(round(cpu_usage, 1))
+            pie_colors.append("rgba(239, 68, 68, 0.75)")
+        if ram_usage is not None:
+            pie_labels.append(f"Device {device_id} RAM")
+            pie_values.append(round(ram_usage, 1))
+            pie_colors.append("rgba(37, 99, 235, 0.75)")
 
     if not lines:
         return None
 
-    chart = {
-        "chart_type": "bar",
-        "title": "Edge Device CPU and RAM",
-        "description": "Latest EG5120 resource readings per device. CPU is shown as usage when available, otherwise CPU temperature.",
-        "labels": chart_labels,
-        "datasets": [
-            {
-                "label": "CPU usage (%) or CPU temperature (C)",
-                "data": cpu_values,
-                "backgroundColor": "rgba(239, 68, 68, 0.65)",
-                "borderColor": "rgba(220, 38, 38, 1)",
-            },
-            {
-                "label": "RAM usage (%)",
-                "data": ram_values,
-                "backgroundColor": "rgba(37, 99, 235, 0.65)",
-                "borderColor": "rgba(29, 78, 216, 1)",
-            },
-        ],
-    }
+    circular_types = {"pie", "doughnut"}
+    if chart_type in circular_types and pie_values:
+        chart = {
+            "chart_type": chart_type,
+            "title": "Edge Device CPU and RAM Usage",
+            "description": "Latest EG5120 CPU and RAM usage values shown as requested in a circular chart.",
+            "labels": pie_labels,
+            "datasets": [
+                {
+                    "label": "Usage (%)",
+                    "data": pie_values,
+                    "backgroundColor": pie_colors,
+                    "borderColor": "rgba(255, 255, 255, 0.92)",
+                    "borderWidth": 2,
+                }
+            ],
+        }
+    else:
+        chart = {
+            "chart_type": chart_type if chart_type in {"bar", "line", "radar", "scatter"} else "bar",
+            "title": "Edge Device CPU and RAM",
+            "description": "Latest EG5120 resource readings per device. CPU is shown as usage when available, otherwise CPU temperature.",
+            "labels": chart_labels,
+            "datasets": [
+                {
+                    "label": "CPU usage (%) or CPU temperature (C)",
+                    "data": cpu_values,
+                    "backgroundColor": "rgba(239, 68, 68, 0.65)",
+                    "borderColor": "rgba(220, 38, 38, 1)",
+                },
+                {
+                    "label": "RAM usage (%)",
+                    "data": ram_values,
+                    "backgroundColor": "rgba(37, 99, 235, 0.65)",
+                    "borderColor": "rgba(29, 78, 216, 1)",
+                },
+            ],
+        }
 
     return {
         "answer": "Latest Edge device CPU and RAM readings:\n" + "\n".join(f"- {line}" for line in lines),
@@ -728,7 +774,7 @@ async def crew_chat(
     timeout_seconds = int(os.getenv("CREW_TIMEOUT_SECONDS", "45"))
 
     if _is_edge_resource_query(effective_query):
-        direct = _query_edge_resources_from_snapshot(device_data)
+        direct = _query_edge_resources_from_snapshot(device_data, _requested_chart_type(effective_query))
         if direct:
             return {
                 "transcript": transcript,
