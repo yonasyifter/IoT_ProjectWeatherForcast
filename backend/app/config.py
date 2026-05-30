@@ -1,7 +1,12 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(BACKEND_ROOT / ".env", override=True)
 
 # INFLUXDB Configuration
 INFLUXDB_URL         = os.getenv("INFLUXDB_URL", "")
@@ -9,6 +14,12 @@ INFLUXDB_TOKEN       = os.getenv("INFLUXDB_TOKEN", "")
 INFLUXDB_ORG         = os.getenv("INFLUXDB_ORG", "")
 INFLUXDB_BUCKET      = os.getenv("INFLUXDB_BUCKET", "")
 INFLUXDB_MEASUREMENT = os.getenv("INFLUXDB_MEASUREMENT", "")
+INFLUXDB_MEASUREMENT2 = os.getenv("INFLUXDB_MEASUREMENT2", "digitalTwinCommand")
+INFLUXDB_MEASUREMENT3 = os.getenv("INFLUXDB_MEASUREMENT3", "Ack2digitalTwin")
+INFLUXDB_DIGITAL_TWIN_DELETED_MEASUREMENT = os.getenv(
+    "INFLUXDB_DIGITAL_TWIN_DELETED_MEASUREMENT",
+    "DeletedDigitalTwinAlert",
+)
 
 # ── LLM Provider API Keys ──────────────────────────────────────────────────
 # At least one of these must be set. The router tries them in order:
@@ -31,7 +42,6 @@ FIREBASE_CLIENT_EMAIL  = os.getenv(
 FIREBASE_CLIENT_ID     = os.getenv("FIREBASE_CLIENT_ID", "")
 FIREBASE_CERT_URL      = os.getenv("FIREBASE_CERT_URL", "")
 FIREBASE_CREDENTIALS_PATH = os.getenv("FIREBASE_CREDENTIALS_PATH", "")
-
 
 def validate_config() -> None:
     # At least one LLM key required

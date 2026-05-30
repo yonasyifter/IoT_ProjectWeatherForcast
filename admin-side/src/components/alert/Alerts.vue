@@ -313,11 +313,6 @@ onUnmounted(() => {
           >
             <i class="bi bi-sliders"></i>
           </button>
-
-          <button class="btn btn-sm btn-outline-light" :disabled="loading" @click="fetchForecast">
-            <i class="bi bi-cloud-arrow-down me-1"></i>
-            Refresh Data
-          </button>
         </div>
       </div>
 

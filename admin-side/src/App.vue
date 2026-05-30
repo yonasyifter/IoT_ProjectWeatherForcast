@@ -2,12 +2,14 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useAdminAuthStore } from '@/auth/adminAuthStore'
 import api from '@/utils/api.js'
+import { fetchEmergencyRequests } from '@/services/emergencyApi.js'
 
 // Existing pages
 import SensorDashboardPage from './pages/SensorDashboardPage.vue'
 import GroupMembersPage    from './pages/GroupMembersPage.vue'
 import WeatherPage         from './pages/WeatherPage.vue'
 import WeatherAlerts       from './components/alert/Alerts.vue'
+import EmergencyPage       from './components/Emergency/emergency.vue'
 import VisitorPage           from './components/visitor/visitor.vue'
 import HelpPage            from './pages/HelpPage.vue'
 import DocsPage            from './pages/DocsPage.vue'
@@ -29,31 +31,57 @@ import AdminLoginView from './views/AdminLoginView.vue'
 const store       = useAdminAuthStore()
 const currentPage = ref('dashboard')
 const digitalAlertCounts = ref({ critical: 0, warning: 0 })
+const emergencyRequestCount = ref(0)
 let alertCountTimer = null
+let emergencyCountTimer = null
+
+function getDismissedDigitalTwinAlertIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem('dismissedDigitalTwinAlerts') || '[]'))
+  } catch {
+    return new Set()
+  }
+}
 
 async function fetchDigitalAlertCounts() {
   try {
-    const data = await api.get('/api/weather/alert?limit=500')
-    const alerts = Array.isArray(data) ? data : []
+    const data = await api.get('/api/weather/digital-twin/alerts?limit=200')
+    const dismissedIds = getDismissedDigitalTwinAlertIds()
+    const alerts = Array.isArray(data)
+      ? data.filter(alert => !dismissedIds.has(alert.id))
+      : []
     digitalAlertCounts.value = {
-      critical: alerts.filter(alert => alert.alert_type === 'critical').length,
-      warning: alerts.filter(alert => alert.alert_type === 'warning').length,
+      critical: alerts.filter(alert => alert.status === 'pending').length,
+      warning: alerts.filter(alert => alert.status === 'updated').length,
     }
   } catch (error) {
     digitalAlertCounts.value = { critical: 0, warning: 0 }
   }
 }
 
+async function fetchEmergencyRequestCount() {
+  try {
+    const data = await fetchEmergencyRequests()
+    emergencyRequestCount.value = data.length
+  } catch (error) {
+    emergencyRequestCount.value = 0
+  }
+}
+
 onMounted(async () => {
   await store.init()
-  await fetchDigitalAlertCounts()
+  await Promise.all([fetchDigitalAlertCounts(), fetchEmergencyRequestCount()])
   window.addEventListener('digital-alerts-updated', fetchDigitalAlertCounts)
+  window.addEventListener('emergency-requests-updated', fetchEmergencyRequestCount)
   alertCountTimer = setInterval(fetchDigitalAlertCounts, 30000)
+  emergencyCountTimer = setInterval(fetchEmergencyRequestCount, 15000)
 })
 
 onUnmounted(() => {
   window.removeEventListener('digital-alerts-updated', fetchDigitalAlertCounts)
+  window.removeEventListener('emergency-requests-updated', fetchEmergencyRequestCount)
   if (alertCountTimer) clearInterval(alertCountTimer)
+  if (emergencyCountTimer) clearInterval(emergencyCountTimer)
 })
 
 function navigateTo(page) { currentPage.value = page }
@@ -101,6 +129,12 @@ async function handleLogout() { await store.logout() }
               <span>Digital Alerts</span>
               <span class="badge rounded-pill bg-danger">{{ digitalAlertCounts.critical }}</span>
               <span class="badge rounded-pill text-bg-warning">{{ digitalAlertCounts.warning }}</span>
+            </button>
+            <button @click="navigateTo('emergency')"
+              :class="['btn btn-sm d-inline-flex align-items-center gap-1', currentPage==='emergency' ? 'btn-danger' : 'btn-outline-danger']">
+              <i class="bi bi-exclamation-octagon"></i>
+              <span>Emergency</span>
+              <span class="badge rounded-pill text-bg-danger">{{ emergencyRequestCount }}</span>
             </button>
             <button @click="navigateTo('visitor')"
               :class="['btn btn-sm', currentPage==='visitor' ? 'btn-primary' : 'btn-outline-light']">
@@ -151,6 +185,7 @@ async function handleLogout() { await store.logout() }
       <SensorDashboardPage v-if="currentPage === 'dashboard'" />
       <WeatherPage         v-else-if="currentPage === 'weather'" />
       <WeatherAlerts       v-else-if="currentPage === 'weather-alerts'" />
+      <EmergencyPage       v-else-if="currentPage === 'emergency'" />
       <VisitorPage         v-else-if="currentPage === 'visitor'" />
       <GroupMembersPage    v-else-if="currentPage === 'members'" />
       <HelpPage            v-else-if="currentPage === 'help'" />

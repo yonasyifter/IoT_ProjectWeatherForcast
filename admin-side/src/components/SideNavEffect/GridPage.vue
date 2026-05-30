@@ -32,8 +32,7 @@ const TIME_RANGES = {
 /* -----------------------
  * State
  * --------------------- */
-const selectedDevice = ref('101')
-const deviceInput = ref('101')
+const selectedDevice = ref('')
 const deviceNotFound = ref(false)
 const availableDevices = ref([])
 const timeRange = ref('3h')
@@ -365,10 +364,22 @@ const fetchSensorData = async () => {
     const data = await api.get(`/api/weather/forecast/?minutes=${minutes}`)
     if (!Array.isArray(data)) throw new Error('Invalid API response format')
 
-    const uniqueDevices = [...new Set(data.map(d => String(d.device_id ?? 'unknown')))].sort()
+    const uniqueDevices = [...new Set(
+      data
+        .map(d => String(d.device_id ?? '').trim())
+        .filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
     availableDevices.value = uniqueDevices
 
-    const filteredData = data.filter(d => String(d.device_id) === String(selectedDevice.value))
+    const activeDevice = uniqueDevices.includes(String(selectedDevice.value))
+      ? String(selectedDevice.value)
+      : uniqueDevices[0] || ''
+
+    if (selectedDevice.value !== activeDevice) {
+      selectedDevice.value = activeDevice
+    }
+
+    const filteredData = data.filter(d => String(d.device_id) === activeDevice)
 
     if (filteredData.length === 0) {
       deviceNotFound.value = true
@@ -392,7 +403,7 @@ const fetchSensorData = async () => {
         prediction_time: toNum(d.prediction_time),
         latitude: toNum(d.latitude),
         longitude: toNum(d.longitude),
-        device_id: d.device_id || selectedDevice.value
+        device_id: d.device_id || activeDevice
       }))
       .filter(d => Number.isFinite(d.time))
       .sort((a, b) => a.time - b.time)
@@ -408,10 +419,7 @@ const fetchSensorData = async () => {
   }
 }
 
-const searchDevice = async () => {
-  const t = deviceInput.value.trim()
-  if (!t) return
-  selectedDevice.value = t
+const handleDeviceChange = async () => {
   await fetchSensorData()
   if (!deviceNotFound.value && sensorData.value.length > 0) {
     setTimeout(() => { if (map && marker) updateMapMarker(); else initMap() }, 300)
@@ -439,7 +447,9 @@ const generateSimulatedData = () => {
   const now = Date.now()
   const minutes = minutesForRange(timeRange.value)
   const points = Math.min(minutes, 180)
-  const deviceOffset = parseInt(selectedDevice.value) - 101
+  const deviceIndex = Math.max(0, availableDevices.value.indexOf(selectedDevice.value))
+  const numericSuffix = Number(String(selectedDevice.value).match(/\d+$/)?.[0])
+  const deviceOffset = Number.isFinite(numericSuffix) ? numericSuffix % 5 : deviceIndex
   const tempBase = 22 + deviceOffset * 0.5
   const humBase = 47 + deviceOffset * 2
   const noiseBase = 50 + deviceOffset * 3
@@ -709,14 +719,23 @@ onBeforeUnmount(() => {
       <div class="controls-grid">
         <div>
           <label class="label"><i class="bi bi-hdd-rack"></i> Device ID</label>
-          <div class="device-search">
-            <input v-model="deviceInput" type="text" class="input"
-              placeholder="Enter device ID (e.g., 101)" @keyup.enter="searchDevice"/>
-            <button class="btn btn-search" @click="searchDevice"
-              :disabled="loading || !deviceInput.trim()">
-              <i class="bi bi-search"></i> Search
-            </button>
-          </div>
+          <select
+            v-model="selectedDevice"
+            class="input"
+            :disabled="loading && availableDevices.length === 0"
+            @change="handleDeviceChange"
+          >
+            <option value="" disabled>
+              {{ loading ? 'Loading devices...' : 'Select device' }}
+            </option>
+            <option
+              v-for="deviceId in availableDevices"
+              :key="deviceId"
+              :value="deviceId"
+            >
+              {{ deviceId }}
+            </option>
+          </select>
           <div class="help">
             <strong>Available devices:</strong>
             {{ availableDevices.length ? availableDevices.join(', ') : (loading ? 'Loading…' : '—') }}
@@ -1244,23 +1263,8 @@ onBeforeUnmount(() => {
   gap: 15px;
 }
 
-.device-search { display: flex; gap: 8px; }
-.device-search .input { flex: 1; }
-
 .help { margin-top: 8px; color: #94a3b8; font-size: 11px; line-height: 1.4; }
 .help strong { color: #cbd5e0; font-weight: 700; }
-
-.btn-search {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-  padding: 8px 16px;
-  white-space: nowrap;
-}
-.btn-search:hover:not(:disabled) {
-  background: #4a8fd8;
-  box-shadow: 0 0 14px rgba(96, 165, 250, 0.4);
-}
 
 .device-not-found {
   margin-top: 12px;

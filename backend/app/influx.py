@@ -1,5 +1,7 @@
-from influxdb_client import InfluxDBClient
-from app.config import INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
+
+from app.config import INFLUXDB_BUCKET, INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG
 
 _client: InfluxDBClient | None = None
 
@@ -16,3 +18,8 @@ def get_client() -> InfluxDBClient:
 def query(flux: str):
     client = get_client()
     return client.query_api().query(flux)
+
+
+def write_point(point: Point, bucket: str = INFLUXDB_BUCKET):
+    client = get_client()
+    return client.write_api(write_options=SYNCHRONOUS).write(bucket=bucket, org=INFLUXDB_ORG, record=point)

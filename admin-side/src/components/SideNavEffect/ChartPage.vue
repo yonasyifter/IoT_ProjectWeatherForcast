@@ -6,7 +6,7 @@ import api from '../../utils/api.js'
 /* -----------------------
  * State
  * --------------------- */
-const selectedDevice = ref('101')
+const selectedDevice = ref('')
 const timeRange = ref('6h')
 const bucketMinutes = ref(5)
 const refreshSeconds = ref(30)
@@ -125,10 +125,22 @@ async function loadChartData() {
 
     if (!Array.isArray(data)) throw new Error('Unexpected API response')
 
-    const uniqueDevices = [...new Set(data.map(d => String(d.device_id ?? 'unknown')))].sort()
+    const uniqueDevices = [...new Set(
+      data
+        .map(d => String(d.device_id ?? '').trim())
+        .filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
     availableDevices.value = uniqueDevices
 
-    const filtered = data.filter(d => String(d.device_id) === String(selectedDevice.value))
+    const activeDevice = uniqueDevices.includes(String(selectedDevice.value))
+      ? String(selectedDevice.value)
+      : uniqueDevices[0] || ''
+
+    if (selectedDevice.value !== activeDevice) {
+      selectedDevice.value = activeDevice
+    }
+
+    const filtered = data.filter(d => String(d.device_id) === activeDevice)
     
     const normalized = filtered
       .map(d => ({
@@ -602,7 +614,18 @@ onBeforeUnmount(() => {
       <div class="controls-grid">
         <div>
           <label class="label"><i class="bi bi-hdd"></i> Device ID</label>
-          <input v-model="selectedDevice" type="text" class="input" placeholder="Enter device ID (e.g., 101, 102)" />
+          <select v-model="selectedDevice" class="input" :disabled="loading && availableDevices.length === 0">
+            <option value="" disabled>
+              {{ loading ? 'Loading devices...' : 'Select device' }}
+            </option>
+            <option
+              v-for="deviceId in availableDevices"
+              :key="deviceId"
+              :value="deviceId"
+            >
+              {{ deviceId }}
+            </option>
+          </select>
           <div class="help">
             <strong>Available devices:</strong>
             {{ availableDevices.length ? availableDevices.join(', ') : (loading ? 'Loading…' : '—') }}

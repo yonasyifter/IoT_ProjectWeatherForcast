@@ -6,21 +6,25 @@ const alerts = ref([])
 const loading = ref(false)
 const deletingIds = ref(new Set())
 const error = ref('')
+const dismissedIds = ref(new Set(JSON.parse(localStorage.getItem('dismissedDigitalTwinAlerts') || '[]')))
 let refreshTimer = null
 
 const totals = computed(() => ({
   all: alerts.value.length,
-  critical: alerts.value.filter(alert => alert.alert_type === 'critical').length,
-  warning: alerts.value.filter(alert => alert.alert_type === 'warning').length,
+  critical: alerts.value.filter(alert => alert.status === 'pending').length,
+  warning: alerts.value.filter(alert => alert.status === 'updated').length,
 }))
+
+const pendingAlerts = computed(() => alerts.value.filter(alert => alert.status === 'pending'))
 
 async function fetchAlerts() {
   loading.value = true
   error.value = ''
 
   try {
-    const data = await api.get('/api/weather/alert?limit=100')
-    alerts.value = Array.isArray(data) ? data : []
+    const data = await api.get('/api/weather/digital-twin/alerts?limit=100')
+    const digitalTwinAlerts = Array.isArray(data) ? data : []
+    alerts.value = digitalTwinAlerts.filter(alert => !dismissedIds.value.has(alert.id))
   } catch (err) {
     error.value = err.message || 'Failed to load digital twin alerts'
   } finally {
@@ -30,18 +34,22 @@ async function fetchAlerts() {
 
 async function deleteAlert(alert) {
   if (!alert?.id) return
-  const confirmed = window.confirm('Delete this digital twin alert?')
-  if (!confirmed) return
-
   deletingIds.value = new Set([...deletingIds.value, alert.id])
   error.value = ''
 
   try {
-    await api.delete(`/api/weather/alert/${alert.id}`)
+    const params = new URLSearchParams({
+      time: alert.delete_time || alert.time,
+      device_id: alert.device_id || '',
+    })
+
+    await api.delete(`/api/weather/digital-twin/alerts/${encodeURIComponent(alert.id)}?${params.toString()}`)
+    dismissedIds.value = new Set([...dismissedIds.value, alert.id])
+    localStorage.setItem('dismissedDigitalTwinAlerts', JSON.stringify([...dismissedIds.value]))
     alerts.value = alerts.value.filter(item => item.id !== alert.id)
     window.dispatchEvent(new CustomEvent('digital-alerts-updated'))
   } catch (err) {
-    error.value = err.message || 'Failed to delete alert'
+    error.value = err.message || 'Failed to delete digital twin alert from InfluxDB'
   } finally {
     const nextDeletingIds = new Set(deletingIds.value)
     nextDeletingIds.delete(alert.id)
@@ -53,8 +61,10 @@ function alertClass(type) {
   return type === 'critical' ? 'danger' : 'warning'
 }
 
-function alertLabel(type) {
-  return type === 'critical' ? 'Critical' : 'Warning'
+function alertLabel(alert) {
+  if (alert.status === 'updated') return 'Gateway updated'
+  if (alert.status === 'pending') return 'Awaiting gateway'
+  return 'Digital twin'
 }
 
 function formatValue(value) {
@@ -67,6 +77,38 @@ function formatDate(value) {
   if (!value) return '-'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString()
+}
+
+function formatBoolean(value) {
+  if (value === true || value === 'true') return 'Enabled'
+  if (value === false || value === 'false') return 'Disabled'
+  return formatValue(value)
+}
+
+function desiredRows(alert) {
+  const desired = alert.desired_properties || {}
+  return [
+    { label: 'Sampling rate', value: desired.sampling_rate_s, unit: 's' },
+    { label: 'Alert active', value: formatBoolean(desired.alert_active) },
+    { label: 'Temperature threshold', value: desired.alert_threshold_temp, unit: 'C' },
+  ]
+}
+
+function ackSamplingRate(alert) {
+  const ack = alert.acknowledgement || {}
+  return alert.gateway_sampling_rate ?? ack.current?.sampling_rate_s ?? ack.applied?.sampling_rate_s ?? alert.change_for_alert?.[0]?.ack_value
+}
+
+function confirmationTime(alert) {
+  return alert.confirmation_source === 'sensor_measurement'
+    ? alert.sensor_time
+    : alert.ack_time
+}
+
+function confirmationLabel(alert) {
+  return alert.confirmation_source === 'sensor_measurement'
+    ? 'Sensor measurement confirms the gateway sampling rate'
+    : 'Gateway acknowledgement confirms the desired properties'
 }
 
 onMounted(() => {
@@ -103,6 +145,13 @@ onUnmounted(() => {
       <i class="bi bi-exclamation-triangle me-2"></i>{{ error }}
     </div>
 
+    <div v-if="pendingAlerts.length" class="gateway-warning mb-3">
+      <i class="bi bi-exclamation-triangle-fill"></i>
+      <span>
+        {{ pendingAlerts.length }} gateway update{{ pendingAlerts.length === 1 ? '' : 's' }} still waiting for acknowledgement.
+      </span>
+    </div>
+
     <div v-if="loading && alerts.length === 0" class="text-center py-5 text-secondary">
       <div class="spinner-border text-info mb-2"></div>
       <div>Loading alerts...</div>
@@ -118,51 +167,62 @@ onUnmounted(() => {
         v-for="alert in alerts"
         :key="alert.id"
         class="alert-row"
-        :class="`is-${alertClass(alert.alert_type)}`"
+        :class="`is-${alert.status === 'pending' ? 'danger' : alertClass(alert.alert_type)}`"
       >
+        <button
+          class="dismiss-btn"
+          :disabled="deletingIds.has(alert.id)"
+          @click="deleteAlert(alert)"
+          title="Delete notification"
+          aria-label="Delete notification"
+        >
+          <span v-if="deletingIds.has(alert.id)" class="spinner-border spinner-border-sm"></span>
+          <i v-else class="bi bi-x-lg"></i>
+        </button>
+
         <div class="alert-topline">
           <div class="d-flex align-items-center gap-2 flex-wrap">
             <span class="device-chip">
               <i class="bi bi-hdd-network me-1"></i>
               Device {{ alert.device_id || 'unknown' }}
             </span>
-            <span class="badge" :class="`text-bg-${alertClass(alert.alert_type)}`">
-              {{ alertLabel(alert.alert_type) }}
+            <span
+              class="badge"
+              :class="alert.status === 'pending' ? 'text-bg-danger' : `text-bg-${alertClass(alert.alert_type)}`"
+            >
+              {{ alertLabel(alert) }}
             </span>
             <span class="text-secondary small">{{ formatDate(alert.time || alert.created_at) }}</span>
           </div>
 
-          <button
-            class="btn btn-sm btn-outline-danger ms-auto"
-            :disabled="deletingIds.has(alert.id)"
-            @click="deleteAlert(alert)"
-            title="Delete alert"
-          >
-            <span v-if="deletingIds.has(alert.id)" class="spinner-border spinner-border-sm me-1"></span>
-            <i v-else class="bi bi-trash me-1"></i>
-            Delete
-          </button>
         </div>
 
-        <p class="mb-2">{{ alert.description || 'Significant device data change detected.' }}</p>
+        <p class="mb-2 pe-4">{{ alert.description || 'Significant device data change detected.' }}</p>
 
-        <div class="table-responsive">
-          <table class="table table-sm table-dark mb-0 align-middle">
-            <thead>
-              <tr>
-                <th>Parameter</th>
-                <th>Previous</th>
-                <th>Current</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="change in alert.change_for_alert" :key="`${alert.id}-${change.parameter}`">
-                <td class="font-monospace text-info">{{ change.parameter }}</td>
-                <td>{{ formatValue(change.previous_value) }}</td>
-                <td class="fw-semibold">{{ formatValue(change.current_value) }}</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="digital-twin-body">
+          <div class="desired-grid">
+            <div v-for="row in desiredRows(alert)" :key="`${alert.id}-${row.label}`" class="desired-item">
+              <span>{{ row.label }}</span>
+              <strong>{{ formatValue(row.value) }}{{ row.unit ? ` ${row.unit}` : '' }}</strong>
+            </div>
+          </div>
+
+          <div class="ack-card" :class="alert.status === 'updated' ? 'ack-ok' : 'ack-pending'">
+            <i :class="alert.status === 'updated' ? 'bi bi-check-circle-fill' : 'bi bi-clock-history'"></i>
+            <div>
+              <strong>
+                {{ alert.status === 'updated' ? confirmationLabel(alert) : 'Gateway acknowledgement missing' }}
+              </strong>
+              <p class="mb-0">
+                <template v-if="alert.status === 'updated'">
+                  Gateway sampling updated to the new rate: {{ formatValue(ackSamplingRate(alert)) }} s on {{ formatDate(confirmationTime(alert)) }}.
+                </template>
+                <template v-else>
+                  The dashboard has the desired sampling rate, but the edge gateway has not confirmed the update yet.
+                </template>
+              </p>
+            </div>
+          </div>
         </div>
       </article>
     </div>
@@ -212,6 +272,17 @@ onUnmounted(() => {
   color: #94a3b8;
 }
 
+.gateway-warning {
+  align-items: center;
+  background: rgba(220, 53, 69, 0.16);
+  border: 1px solid rgba(220, 53, 69, 0.45);
+  border-radius: 8px;
+  color: #ffb3bd;
+  display: flex;
+  gap: 0.65rem;
+  padding: 0.75rem 0.9rem;
+}
+
 .alert-list {
   display: grid;
   gap: 0.75rem;
@@ -223,6 +294,7 @@ onUnmounted(() => {
   border-left-width: 4px;
   border-radius: 8px;
   padding: 1rem;
+  position: relative;
 }
 
 .alert-row.is-danger {
@@ -239,6 +311,88 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 0.65rem;
   margin-bottom: 0.65rem;
+}
+
+.dismiss-btn {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  border-radius: 50%;
+  color: #fecdd3;
+  display: inline-flex;
+  height: 2rem;
+  justify-content: center;
+  position: absolute;
+  right: 0.75rem;
+  top: 0.75rem;
+  width: 2rem;
+}
+
+.dismiss-btn:hover {
+  background: rgba(220, 53, 69, 0.24);
+  color: #ffffff;
+}
+
+.digital-twin-body {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.desired-grid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.desired-item {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.25rem;
+  min-height: 4.25rem;
+  padding: 0.75rem;
+}
+
+.desired-item span {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.desired-item strong {
+  color: #f8fafc;
+  font-size: 1.05rem;
+}
+
+.ack-card {
+  align-items: flex-start;
+  border-radius: 8px;
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.8rem;
+}
+
+.ack-card strong {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.ack-card p {
+  color: #cbd5e1;
+}
+
+.ack-ok {
+  background: rgba(25, 135, 84, 0.16);
+  border: 1px solid rgba(25, 135, 84, 0.45);
+  color: #86efac;
+}
+
+.ack-pending {
+  background: rgba(220, 53, 69, 0.14);
+  border: 1px solid rgba(220, 53, 69, 0.45);
+  color: #fca5a5;
 }
 
 th,
