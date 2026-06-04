@@ -7,7 +7,9 @@
 #   1. InfluxDB       — time-series sensor telemetry
 #   2. RCMS OpenAPI   — EG5120 Edge device management
 #   3. Firebase       — user data, auth, Firestore park config
-#   4. LLM knowledge  — general meteorology / IoT / maths fallback
+#   4. Site operations — backend routes, frontend workflows, weather/digital
+#                        twin alerts, emergency requests, and available actions
+#   5. LLM knowledge  — general meteorology / IoT / maths fallback
 #
 # Fallback rule (applies to every agent):
 #   If no official data is available, the agent MAY use its own
@@ -188,7 +190,9 @@ reasoning_agent:
     concisely, and in the language specified. Draw exclusively on the
     context block produced by the Context Builder, the anomaly report from
     the Diagnostics Analyst, raw sensor statistics from the Sensor Analyst,
-    and live Edge device data from the Edge Device Officer.
+    live Edge device data from the Edge Device Officer, and the
+    runtime_context.site_operations bundle for whole-website operational
+    awareness.
     When no official data exists, answer from general knowledge but always
     prefix with: "I don't have official data for this, but based on general
     knowledge I can tell you that …"

@@ -10,7 +10,6 @@ Auth: Firebase session (Bearer token)
 from __future__ import annotations
 
 import asyncio
-import base64
 import concurrent.futures
 import functools
 import json
@@ -22,9 +21,6 @@ import traceback
 from datetime import datetime
 from email.message import EmailMessage
 from typing import Any
-from urllib import error as urlerror
-from urllib import parse as urlparse
-from urllib import request as urlrequest
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
@@ -52,7 +48,6 @@ router = APIRouter()
 
 
 class ReportDeliveryRequest(BaseModel):
-    channel: str
     contact: str
     subject: str = "Smart Park Report"
     html: str | None = None
@@ -121,7 +116,14 @@ def _require_report_body(payload: ReportDeliveryRequest) -> tuple[str, str]:
     return html, text
 
 
-def _send_report_email(payload: ReportDeliveryRequest) -> None:
+def _sender_email_from_user(user: dict[str, Any]) -> str:
+    email = str(user.get("email") or "").strip()
+    if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return email
+    raise HTTPException(status_code=400, detail="The logged-in user does not have a valid email address.")
+
+
+def _send_report_email(payload: ReportDeliveryRequest, current_user: dict[str, Any]) -> None:
     contact = payload.contact.strip()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", contact):
         raise HTTPException(status_code=400, detail="Please enter a valid email address.")
@@ -131,6 +133,7 @@ def _send_report_email(payload: ReportDeliveryRequest) -> None:
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
     smtp_from = os.getenv("SMTP_FROM") or smtp_user
+    user_from = _sender_email_from_user(current_user)
     if not smtp_host or not smtp_from:
         raise HTTPException(
             status_code=503,
@@ -140,7 +143,9 @@ def _send_report_email(payload: ReportDeliveryRequest) -> None:
     html, text = _require_report_body(payload)
     message = EmailMessage()
     message["Subject"] = payload.subject or "Smart Park Report"
-    message["From"] = smtp_from
+    message["From"] = user_from
+    message["Sender"] = smtp_from
+    message["Reply-To"] = user_from
     message["To"] = contact
     message.set_content(text)
     if html:
@@ -151,88 +156,16 @@ def _send_report_email(payload: ReportDeliveryRequest) -> None:
             with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ssl.create_default_context(), timeout=30) as smtp:
                 if smtp_user and smtp_password:
                     smtp.login(smtp_user, smtp_password)
-                smtp.send_message(message)
+                smtp.send_message(message, from_addr=smtp_from, to_addrs=[contact])
         else:
             with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp:
                 if _env_bool("SMTP_TLS", True):
                     smtp.starttls(context=ssl.create_default_context())
                 if smtp_user and smtp_password:
                     smtp.login(smtp_user, smtp_password)
-                smtp.send_message(message)
+                smtp.send_message(message, from_addr=smtp_from, to_addrs=[contact])
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Email delivery failed: {exc}") from exc
-
-
-def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
-    data = json.dumps(payload).encode("utf-8")
-    req = urlrequest.Request(url, data=data, headers={**headers, "Content-Type": "application/json"}, method="POST")
-    try:
-        with urlrequest.urlopen(req, timeout=30) as response:
-            body = response.read().decode("utf-8")
-            return json.loads(body) if body else {}
-    except urlerror.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise HTTPException(status_code=502, detail=f"WhatsApp delivery failed: {detail}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"WhatsApp delivery failed: {exc}") from exc
-
-
-def _post_form(url: str, payload: dict[str, str], headers: dict[str, str]) -> dict[str, Any]:
-    data = urlparse.urlencode(payload).encode("utf-8")
-    req = urlrequest.Request(url, data=data, headers=headers, method="POST")
-    try:
-        with urlrequest.urlopen(req, timeout=30) as response:
-            body = response.read().decode("utf-8")
-            return json.loads(body) if body else {}
-    except urlerror.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise HTTPException(status_code=502, detail=f"WhatsApp delivery failed: {detail}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"WhatsApp delivery failed: {exc}") from exc
-
-
-def _send_report_whatsapp(payload: ReportDeliveryRequest) -> None:
-    contact = re.sub(r"[\s()-]", "", payload.contact.strip())
-    if not re.match(r"^\+\d{8,15}$", contact):
-        raise HTTPException(status_code=400, detail="Please enter a WhatsApp number in international format, for example +393511204817.")
-
-    _, text = _require_report_body(payload)
-    message_text = text[:3800]
-
-    meta_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
-    meta_phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-    if meta_token and meta_phone_id:
-        _post_json(
-            f"https://graph.facebook.com/v20.0/{meta_phone_id}/messages",
-            {
-                "messaging_product": "whatsapp",
-                "to": contact.lstrip("+"),
-                "type": "text",
-                "text": {"preview_url": False, "body": message_text},
-            },
-            {"Authorization": f"Bearer {meta_token}"},
-        )
-        return
-
-    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
-    twilio_from = os.getenv("TWILIO_WHATSAPP_FROM")
-    if twilio_sid and twilio_token and twilio_from:
-        auth = base64.b64encode(f"{twilio_sid}:{twilio_token}".encode("utf-8")).decode("ascii")
-        _post_form(
-            f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json",
-            {"From": f"whatsapp:{twilio_from}", "To": f"whatsapp:{contact}", "Body": message_text},
-            {"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"},
-        )
-        return
-
-    raise HTTPException(
-        status_code=503,
-        detail=(
-            "WhatsApp delivery is not configured. Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID "
-            "for Meta Cloud API, or TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_WHATSAPP_FROM for Twilio."
-        ),
-    )
 
 
 def _coerce_json_to_str(value: Any, fallback: str | None) -> str | None:
@@ -1008,20 +941,16 @@ from(bucket: "{INFLUXDB_BUCKET}")
 
 @router.post(
     "/deliver",
-    summary="Send generated Smart Park report by email or WhatsApp",
-    dependencies=[Depends(get_admin_session_user)],
+    summary="Send generated Smart Park report by email",
 )
-async def deliver_report(payload: ReportDeliveryRequest) -> dict[str, Any]:
-    channel = payload.channel.strip().lower()
-    if channel == "email":
-        _send_report_email(payload)
-    elif channel == "whatsapp":
-        _send_report_whatsapp(payload)
-    else:
-        raise HTTPException(status_code=400, detail="Delivery channel must be email or whatsapp.")
-
+async def deliver_report(
+    payload: ReportDeliveryRequest,
+    current_user: dict[str, Any] = Depends(get_admin_session_user),
+) -> dict[str, Any]:
+    _send_report_email(payload, current_user)
     return {
         "status": "sent",
-        "channel": channel,
+        "channel": "email",
         "contact": payload.contact,
+        "sender": current_user.get("email"),
     }

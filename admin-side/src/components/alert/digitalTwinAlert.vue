@@ -79,36 +79,24 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString()
 }
 
-function formatBoolean(value) {
-  if (value === true || value === 'true') return 'Enabled'
-  if (value === false || value === 'false') return 'Disabled'
-  return formatValue(value)
-}
-
 function desiredRows(alert) {
   const desired = alert.desired_properties || {}
   return [
     { label: 'Sampling rate', value: desired.sampling_rate_s, unit: 's' },
-    { label: 'Alert active', value: formatBoolean(desired.alert_active) },
-    { label: 'Temperature threshold', value: desired.alert_threshold_temp, unit: 'C' },
   ]
 }
 
 function ackSamplingRate(alert) {
-  const ack = alert.acknowledgement || {}
-  return alert.gateway_sampling_rate ?? ack.current?.sampling_rate_s ?? ack.applied?.sampling_rate_s ?? alert.change_for_alert?.[0]?.ack_value
+  const measurement = alert.digital_twin_measurement || alert.acknowledgement || {}
+  return alert.gateway_sampling_rate ?? measurement.sampling_rate_s ?? measurement.sampling_s ?? alert.change_for_alert?.[0]?.ack_value
 }
 
 function confirmationTime(alert) {
-  return alert.confirmation_source === 'sensor_measurement'
-    ? alert.sensor_time
-    : alert.ack_time
+  return alert.gateway_measurement_time || alert.ack_time
 }
 
 function confirmationLabel(alert) {
-  return alert.confirmation_source === 'sensor_measurement'
-    ? 'Sensor measurement confirms the gateway sampling rate'
-    : 'Gateway acknowledgement confirms the desired properties'
+  return 'Gateway measurement confirms the desired properties'
 }
 
 onMounted(() => {
@@ -148,7 +136,7 @@ onUnmounted(() => {
     <div v-if="pendingAlerts.length" class="gateway-warning mb-3">
       <i class="bi bi-exclamation-triangle-fill"></i>
       <span>
-        {{ pendingAlerts.length }} gateway update{{ pendingAlerts.length === 1 ? '' : 's' }} still waiting for acknowledgement.
+        {{ pendingAlerts.length }} gateway update{{ pendingAlerts.length === 1 ? '' : 's' }} not reflected in gateway telemetry.
       </span>
     </div>
 
@@ -211,14 +199,14 @@ onUnmounted(() => {
             <i :class="alert.status === 'updated' ? 'bi bi-check-circle-fill' : 'bi bi-clock-history'"></i>
             <div>
               <strong>
-                {{ alert.status === 'updated' ? confirmationLabel(alert) : 'Gateway acknowledgement missing' }}
+                {{ alert.status === 'updated' ? confirmationLabel(alert) : 'Gateway measurement confirmation missing' }}
               </strong>
               <p class="mb-0">
                 <template v-if="alert.status === 'updated'">
                   Gateway sampling updated to the new rate: {{ formatValue(ackSamplingRate(alert)) }} s on {{ formatDate(confirmationTime(alert)) }}.
                 </template>
                 <template v-else>
-                  The dashboard has the desired sampling rate, but the edge gateway has not confirmed the update yet.
+                  Gateway telemetry does not match the digital twin sampling value. The gateway may be out of reach or without internet.
                 </template>
               </p>
             </div>

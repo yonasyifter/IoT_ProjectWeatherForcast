@@ -15,7 +15,6 @@ INFLUXDB_ORG         = os.getenv("INFLUXDB_ORG", "")
 INFLUXDB_BUCKET      = os.getenv("INFLUXDB_BUCKET", "")
 INFLUXDB_MEASUREMENT = os.getenv("INFLUXDB_MEASUREMENT", "")
 INFLUXDB_MEASUREMENT2 = os.getenv("INFLUXDB_MEASUREMENT2", "digitalTwinCommand")
-INFLUXDB_MEASUREMENT3 = os.getenv("INFLUXDB_MEASUREMENT3", "Ack2digitalTwin")
 INFLUXDB_DIGITAL_TWIN_DELETED_MEASUREMENT = os.getenv(
     "INFLUXDB_DIGITAL_TWIN_DELETED_MEASUREMENT",
     "DeletedDigitalTwinAlert",
@@ -24,8 +23,7 @@ INFLUXDB_DIGITAL_TWIN_DELETED_MEASUREMENT = os.getenv(
 # ── LLM Provider API Keys ──────────────────────────────────────────────────
 # At least one of these must be set. The router tries them in order:
 #   1. Groq  →  2. OpenRouter
-GROQ_API_KEY        = os.getenv("GROQ_API_KEY",
-                          "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")
+GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL_ID       = os.getenv("GROQ_MODEL_ID", "groq/llama-3.3-70b-versatile")
 
 OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")   # set in .env to enable

@@ -12,7 +12,6 @@ from app.config import (
     INFLUXDB_DIGITAL_TWIN_DELETED_MEASUREMENT as digital_twin_deleted_meas,
     INFLUXDB_MEASUREMENT as meas,
     INFLUXDB_MEASUREMENT2 as digital_twin_command_meas,
-    INFLUXDB_MEASUREMENT3 as digital_twin_ack_meas,
 )
 
 
@@ -157,25 +156,20 @@ def _device_from(row: dict[str, Any]) -> str:
     if device_id:
         return str(device_id)
     if thing_id and ":" in str(thing_id):
-        return str(thing_id).split(":", 1)[1]
+        return str(thing_id).rsplit(":", 1)[1]
     return str(thing_id or "unknown")
 
 
-def _ack_matches_command(command: dict[str, Any], ack: dict[str, Any]) -> bool:
-    command_device = _device_from(command)
-    ack_device = _device_from(ack)
-    if command_device != "unknown" and ack_device != "unknown" and command_device != ack_device:
+def _same_device(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_device = _device_from(left)
+    right_device = _device_from(right)
+    if left_device == "unknown" or right_device == "unknown":
         return False
-
-    command_topic = _value_from(command, ["topic", "mqtt_topic", "source_topic"])
-    ack_source_topic = _value_from(ack, ["source_topic"])
-    return not command_topic or not ack_source_topic or str(command_topic) == str(ack_source_topic)
+    return _normalize_key(left_device) == _normalize_key(right_device)
 
 
 def _row_matches_command_device(command: dict[str, Any], row: dict[str, Any]) -> bool:
-    command_device = _device_from(command)
-    row_device = _device_from(row)
-    return command_device == "unknown" or row_device == "unknown" or command_device == row_device
+    return _same_device(command, row)
 
 
 def _row_is_at_or_after(row: dict[str, Any], timestamp: datetime | None) -> bool:
@@ -183,12 +177,28 @@ def _row_is_at_or_after(row: dict[str, Any], timestamp: datetime | None) -> bool
     return timestamp is None or row_time is None or row_time >= timestamp
 
 
+def _latest_rows_by_device(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        device_id = _device_from(row)
+        if device_id == "unknown":
+            continue
+
+        key = _normalize_key(device_id)
+        current = latest.get(key)
+        if current is None or str(row.get("time") or "") > str(current.get("time") or ""):
+            latest[key] = row
+
+    return sorted(latest.values(), key=lambda row: str(row.get("time") or ""), reverse=True)
+
+
 def _build_digital_twin_alert(
     command: dict[str, Any],
-    ack_rows: list[dict[str, Any]],
     sensor_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    desired_sampling_rate = _value_from(command, [
+    digital_twin_sampling = _value_from(command, ["sampling_s", "sampling_rate_s"])
+    requested_sampling_rate = _value_from(command, [
+        "sampling_s",
         "sampling_rate_s",
         "desiredProperties.sampling_rate_s",
         "features.sensors.desiredProperties.sampling_rate_s",
@@ -205,74 +215,80 @@ def _build_digital_twin_alert(
     ])
 
     command_time = command.get("time") or command.get("_time")
-    parsed_command_time = _parse_datetime(command_time)
-    matching_acks = [
-        ack
-        for ack in ack_rows
-        if _ack_matches_command(command, ack)
-        and _row_is_at_or_after(ack, parsed_command_time)
-    ]
-    ack = matching_acks[0] if matching_acks else None
-    accepted = _truthy(_value_from(ack, ["accepted"])) if ack else False
-    ack_sampling_rate = _value_from(ack or {}, [
-        "current.sampling_rate_s",
-        "applied.sampling_rate_s",
-        "sampling_rate_s",
-    ])
-
     matching_sensor_rows = [
         row
         for row in sensor_rows
         if _row_matches_command_device(command, row)
-        and _row_is_at_or_after(row, parsed_command_time)
     ]
-    sensor_row = matching_sensor_rows[0] if matching_sensor_rows else None
-    sensor_sampling_rate = _value_from(sensor_row or {}, ["sampling_rate_s"])
+    sensor_row = next(
+        (
+            row
+            for row in matching_sensor_rows
+            if _value_from(row, ["sampling_s", "sampling_rate_s"]) is not None
+        ),
+        matching_sensor_rows[0] if matching_sensor_rows else None,
+    )
+    gateway_sampling = _value_from(sensor_row or {}, ["sampling_s", "sampling_rate_s"])
+    gateway_time = sensor_row.get("time") if sensor_row else None
 
-    ack_confirmed = accepted and _same_value(ack_sampling_rate, desired_sampling_rate)
-    sensor_confirmed = _same_value(sensor_sampling_rate, desired_sampling_rate)
-    sampling_rate_updated = ack_confirmed or sensor_confirmed
-    gateway_sampling_rate = ack_sampling_rate if ack_confirmed else sensor_sampling_rate
-    confirmation_source = "acknowledgement" if ack_confirmed else "sensor_measurement" if sensor_confirmed else None
+    digital_twin_confirmed = _same_value(digital_twin_sampling, gateway_sampling)
+    sampling_rate_updated = digital_twin_confirmed
+    gateway_sampling_rate = gateway_sampling
+    confirmation_source = "digital_twin_measurement" if digital_twin_confirmed else None
 
     status = "updated" if sampling_rate_updated else "pending"
     description = (
-        f"Gateway sampling updated to the new sampling rate: {desired_sampling_rate} seconds."
+        f"Gateway sampling updated to the new sampling rate: {digital_twin_sampling} seconds."
         if sampling_rate_updated
-        else f"Digital twin requested sampling rate {desired_sampling_rate} seconds. Gateway confirmation is still pending."
+        else (
+            f"Digital twin sampling is {digital_twin_sampling} seconds, but gateway telemetry "
+            f"reports {gateway_sampling if gateway_sampling is not None else 'no current'} sampling_s. "
+            "The gateway may be out of reach or without internet."
+        )
     )
 
-    ack_time = ack.get("time") if ack else None
-    sensor_time = sensor_row.get("time") if sensor_row else None
     device_id = _device_from(command)
 
     return {
-        "id": f"digital-twin-{device_id}-{command_time}-{desired_sampling_rate}",
+        "id": f"digital-twin-{device_id}-{command_time}-{digital_twin_sampling}",
         "source": "digital_twin",
         "alert_type": "warning" if sampling_rate_updated else "critical",
         "device_id": device_id,
         "thingId": _value_from(command, ["thingId", "thing_id"]),
         "time": command_time,
         "delete_time": command_time,
-        "ack_time": ack_time,
-        "sensor_time": sensor_time,
+        "ack_time": gateway_time or command_time,
+        "sensor_time": gateway_time,
         "status": status,
         "confirmation_source": confirmation_source,
         "gateway_sampling_rate": gateway_sampling_rate,
+        "digital_twin_sampling_rate": digital_twin_sampling,
+        "sampling_comparison": {
+            "digital_twin_device_id": device_id,
+            "gateway_device_id": _device_from(sensor_row or {}) if sensor_row else None,
+            "digital_twin_sampling_s": digital_twin_sampling,
+            "gateway_sampling_s": gateway_sampling,
+            "matched": sampling_rate_updated,
+        },
+        "gateway_measurement": sensor_row,
+        "gateway_measurement_time": gateway_time,
         "description": description,
         "desired_properties": {
-            "sampling_rate_s": desired_sampling_rate,
+            "sampling_rate_s": requested_sampling_rate,
+            "sampling_s": digital_twin_sampling,
+            "revision": _value_from(command, ["revision"]),
             "alert_active": desired_alert_active,
             "alert_threshold_temp": desired_threshold,
         },
-        "acknowledgement": ack,
+        "acknowledgement": command,
+        "digital_twin_measurement": command,
         "change_for_alert": [
             {
                 "parameter": "sampling_rate_s",
                 "previous_value": None,
-                "current_value": desired_sampling_rate,
-                "ack_value": ack_sampling_rate,
-                "sensor_value": sensor_sampling_rate,
+                "current_value": digital_twin_sampling,
+                "ack_value": digital_twin_sampling,
+                "sensor_value": gateway_sampling,
                 "updated": sampling_rate_updated,
             },
             {
@@ -332,9 +348,8 @@ def get_digital_twin_alerts(
     minutes: int = Query(24 * 60, ge=1, le=7 * 24 * 60),
 ):
     try:
-        command_rows = _query_measurement_rows(digital_twin_command_meas, minutes, limit)
-        ack_rows = _query_measurement_rows(digital_twin_ack_meas, minutes, limit * 3)
-        sensor_rows = _query_measurement_rows(meas, minutes, limit * 3)
+        command_rows = _latest_rows_by_device(_query_measurement_rows(digital_twin_command_meas, minutes, limit * 5))
+        sensor_rows = _latest_rows_by_device(_query_measurement_rows(meas, minutes, limit * 5))
         deleted_alert_ids = _query_deleted_digital_twin_ids(7 * 24 * 60)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to load digital twin alerts: {exc}") from exc
@@ -342,12 +357,8 @@ def get_digital_twin_alerts(
     alerts = [
         alert
         for command in command_rows
-        for alert in [_build_digital_twin_alert(command, ack_rows, sensor_rows)]
-        if _value_from(command, [
-            "sampling_rate_s",
-            "desiredProperties.sampling_rate_s",
-            "features.sensors.desiredProperties.sampling_rate_s",
-        ]) is not None
+        for alert in [_build_digital_twin_alert(command, sensor_rows)]
+        if _value_from(command, ["sampling_s", "sampling_rate_s"]) is not None
         and alert["id"] not in deleted_alert_ids
     ]
     return alerts[:limit]

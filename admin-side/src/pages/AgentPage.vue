@@ -295,7 +295,7 @@
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#60a5fa" stroke-width="1.8"/><polyline points="14,2 14,8 20,8" stroke="#60a5fa" stroke-width="1.8"/><line x1="16" y1="13" x2="8" y2="13" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round"/><line x1="16" y1="17" x2="8" y2="17" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round"/><polyline points="10,9 9,9 8,9" stroke="#60a5fa" stroke-width="1.8"/></svg>
                 <div>
                   <p class="ap-report-prompt-title">Generate a full analysis report?</p>
-                  <p class="ap-report-prompt-sub">Device inventory · Statistical analysis with LaTeX · Anomaly findings · Recommendations · Delivery via email or WhatsApp</p>
+                  <p class="ap-report-prompt-sub">Device inventory · Statistical analysis with LaTeX · Anomaly findings · Recommendations · Email delivery</p>
                 </div>
               </div>
               <div class="ap-report-prompt-actions">
@@ -424,23 +424,8 @@
                 Send this report
               </div>
 
-              <div v-if="!deliveryChoice" class="ap-delivery-options">
-                <button class="ap-delivery-btn email" @click="deliveryChoice = 'email'">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" stroke-width="2"/><polyline points="22,6 12,13 2,6" stroke="currentColor" stroke-width="2"/></svg>
-                  📧 Email
-                </button>
-                <button class="ap-delivery-btn whatsapp" @click="deliveryChoice = 'whatsapp'">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" stroke="currentColor" stroke-width="2"/></svg>
-                  💬 WhatsApp
-                </button>
-                <button class="ap-delivery-btn skip" @click="showDeliveryPrompt = false">
-                  ❌ No thanks
-                </button>
-              </div>
-
-              <!-- Email form -->
-              <div v-if="deliveryChoice === 'email'" class="ap-delivery-form">
-                <label class="ap-label">Email address</label>
+              <div class="ap-delivery-form">
+                <label class="ap-label">Recipient email address</label>
                 <div class="ap-delivery-input-row">
                   <input
                     v-model="deliveryEmail"
@@ -453,26 +438,7 @@
                     <span v-if="deliverySending" class="ap-spinner sm"></span>
                     <span v-else>Send</span>
                   </button>
-                  <button class="ap-btn-ghost sm" @click="deliveryChoice = null">Back</button>
-                </div>
-              </div>
-
-              <!-- WhatsApp form -->
-              <div v-if="deliveryChoice === 'whatsapp'" class="ap-delivery-form">
-                <label class="ap-label">Phone number (international format)</label>
-                <div class="ap-delivery-input-row">
-                  <input
-                    v-model="deliveryPhone"
-                    type="tel"
-                    class="ap-input"
-                    placeholder="+39 333 1234567"
-                    @keyup.enter="sendDelivery"
-                  />
-                  <button class="ap-btn-primary sm" @click="sendDelivery" :disabled="deliverySending">
-                    <span v-if="deliverySending" class="ap-spinner sm"></span>
-                    <span v-else>Send</span>
-                  </button>
-                  <button class="ap-btn-ghost sm" @click="deliveryChoice = null">Back</button>
+                  <button class="ap-btn-ghost sm" @click="showDeliveryPrompt = false">No thanks</button>
                 </div>
               </div>
 
@@ -613,7 +579,7 @@ const capabilities = [
   {
     id: 'report',
     name: 'Full Report',
-    desc: 'Comprehensive Markdown · PDF · Word · email / WhatsApp',
+    desc: 'Comprehensive Markdown · PDF · Word · email',
     icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="white" stroke-width="2"/><polyline points="14,2 14,8 20,8" stroke="white" stroke-width="2"/><line x1="16" y1="13" x2="8" y2="13" stroke="white" stroke-width="1.8" stroke-linecap="round"/><line x1="16" y1="17" x2="8" y2="17" stroke="white" stroke-width="1.8" stroke-linecap="round"/></svg>',
     color: 'linear-gradient(135deg,#0ea5e9,#0369a1)',
     placeholder: 'Describe what the report should cover…',
@@ -787,9 +753,7 @@ const reportChartCanvases = ref([])
 let   reportChartInstances = []
 
 const showDeliveryPrompt = ref(false)
-const deliveryChoice     = ref(null)
 const deliveryEmail      = ref('')
-const deliveryPhone      = ref('')
 const deliverySending    = ref(false)
 const deliveryResult     = ref(null)
 
@@ -1023,15 +987,14 @@ function clearReportState () {
   reportSnapshot.value     = []
   reportCharts.value       = []
   showDeliveryPrompt.value = false
-  deliveryChoice.value     = null
   deliveryResult.value     = null
   destroyReportCharts()
 }
 
-// ── Delivery (email / WhatsApp) ───────────────────────────────────────────
+// ── Delivery (email) ──────────────────────────────────────────────────────
 async function sendDelivery () {
-  const contact = deliveryChoice.value === 'email' ? deliveryEmail.value : deliveryPhone.value
-  if (!contact.trim()) { deliveryResult.value = { type: 'error', message: 'Please enter a valid contact.' }; return }
+  const contact = deliveryEmail.value.trim()
+  if (!contact) { deliveryResult.value = { type: 'error', message: 'Please enter a valid email address.' }; return }
   if (!reportContent.value.trim()) { deliveryResult.value = { type: 'error', message: 'Generate a report before sending.' }; return }
 
   deliverySending.value = true
@@ -1040,10 +1003,9 @@ async function sendDelivery () {
   try {
     await renderReportCharts()
     const payload = {
-      channel: deliveryChoice.value,
-      contact: contact.trim(),
+      contact,
       subject: `Smart Park Report - ${new Date().toLocaleString()}`,
-      html: deliveryChoice.value === 'email' ? deliveryReportHtml() : '',
+      html: deliveryReportHtml(),
       text: reportPlainTextForDelivery(),
     }
     await requestWithTimeout(
@@ -1053,9 +1015,7 @@ async function sendDelivery () {
     )
     deliveryResult.value = {
       type: 'success',
-      message: deliveryChoice.value === 'email'
-        ? `Report sent to ${deliveryEmail.value}.`
-        : `Report sent by WhatsApp to ${deliveryPhone.value}.`,
+      message: `Report sent to ${deliveryEmail.value}.`,
     }
   } catch (e) {
     deliveryResult.value = {
@@ -2836,7 +2796,6 @@ function weatherConfidencePercent (payload) {
   font-family: 'Space Grotesk', sans-serif;
 }
 .ap-delivery-btn.email:hover { border-color: #3b82f6; color: #3b82f6; background: rgba(59,130,246,0.1); }
-.ap-delivery-btn.whatsapp:hover { border-color: #25d366; color: #25d366; background: rgba(37,211,102,0.1); }
 .ap-delivery-btn.skip:hover { border-color: var(--danger); color: var(--danger); }
 .ap-delivery-form { display: flex; flex-direction: column; gap: 8px; }
 .ap-delivery-input-row { display: flex; gap: 8px; }

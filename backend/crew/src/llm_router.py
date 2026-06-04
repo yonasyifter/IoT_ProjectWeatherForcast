@@ -81,20 +81,13 @@ class ProviderConfig:
 
 
 PROVIDERS: list[ProviderConfig] = [
-    ProviderConfig(
-        name="Groq (llama-3.3-70b)",
-        model="groq/llama-3.3-70b-versatile",
-        api_key_env="GROQ_API_KEY2",
-        default_key="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",
-    ),
-    # ── 2. Groq (fast free-tier) ─────────────────────────────────────────────
+    # ── 1. Groq (fast free-tier) ─────────────────────────────────────────────
     ProviderConfig(
         name="Groq (llama-3.3-70b)",
         model="groq/llama-3.3-70b-versatile",
         api_key_env="GROQ_API_KEY",
-        default_key="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",
     ),
-# ── 3. OpenRouter (optional) ─────────────────────────────────────────────
+# ── 2. OpenRouter (optional) ─────────────────────────────────────────────
 
     ProviderConfig(
         name="OpenRouter (llama-3.3-70b)",
@@ -105,18 +98,7 @@ PROVIDERS: list[ProviderConfig] = [
             "HTTP-Referer": "http://localhost:3000",
             "X-Title": "SmartPark",
         },
-    ),
-
-    ProviderConfig(
-        name="OpenRouter (mistral-7b free)",
-        model="openrouter/mistralai/mistral-7b-instruct:free",
-        api_key_env="OPENROUTER_API_KEY",
-        base_url="https://openrouter.ai/api/v1",
-        extra_headers={
-            "HTTP-Referer": "http://localhost:3000",
-            "X-Title": "SmartPark",
-        },
-    ),
+    )
 ]
 
 
@@ -124,7 +106,7 @@ def _get_key(p: ProviderConfig) -> str:
     # For Bedrock, key presence is checked via aws_aki
     if p.aws_aki:
         return p.aws_aki
-    return os.getenv(p.api_key_env, p.default_key).strip()
+    return os.getenv(p.api_key_env, "").strip()
 
 
 def call_llm(messages: list[dict], timeout: int = 60) -> str:
