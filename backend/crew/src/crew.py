@@ -47,6 +47,7 @@ Data sources
 
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import os
@@ -446,6 +447,52 @@ def _build_runtime_inputs(
 # CrewAI YAML pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
+_CREWAI_DEFAULT_MAX_TOKENS = 4096
+
+
+class ProviderSafeLLM(LLM):
+    """CrewAI LLM wrapper that removes provider-incompatible message metadata."""
+
+    def __init__(self, *args, strip_message_fields: tuple[str, ...] = (), **kwargs):
+        super().__init__(*args, **kwargs)
+        self._strip_message_fields = set(strip_message_fields)
+
+    def _prepare_completion_params(self, messages, tools=None) -> dict:
+        params = super()._prepare_completion_params(messages, tools=tools)
+        if self._strip_message_fields and "messages" in params:
+            params["messages"] = _strip_message_fields(
+                params["messages"],
+                self._strip_message_fields,
+            )
+        return params
+
+
+def _strip_message_fields(value, field_names: set[str]):
+    if isinstance(value, list):
+        return [_strip_message_fields(item, field_names) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _strip_message_fields(item, field_names)
+            for key, item in value.items()
+            if key not in field_names
+        }
+    return value
+
+
+def _provider_max_tokens(provider) -> int:
+    provider_env = getattr(provider, "max_tokens_env", "")
+    if provider_env:
+        raw = os.getenv(provider_env, "").strip()
+        if raw:
+            return int(raw)
+
+    raw = os.getenv("CREWAI_MAX_TOKENS", "").strip()
+    if raw:
+        return int(raw)
+
+    return int(getattr(provider, "default_max_tokens", _CREWAI_DEFAULT_MAX_TOKENS))
+
+
 def _load_yaml_config(name: str) -> dict:
     with (_CONFIG_DIR / name).open("r", encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
@@ -458,13 +505,14 @@ def _make_llm(provider, timeout: int) -> LLM:
         "api_key": key,
         "temperature": 0.3,
         "timeout": timeout,
-        "max_tokens": int(os.getenv("CREWAI_MAX_TOKENS", "4096")),
+        "max_tokens": _provider_max_tokens(provider),
+        "strip_message_fields": getattr(provider, "strip_message_fields", ()),
     }
     if provider.base_url:
         kwargs["base_url"] = provider.base_url
     if provider.extra_headers:
-        kwargs["extra_headers"] = provider.extra_headers
-    return LLM(**kwargs)
+        kwargs["extra_headers"] = copy.deepcopy(provider.extra_headers)
+    return ProviderSafeLLM(**kwargs)
 
 
 def _available_providers() -> list:

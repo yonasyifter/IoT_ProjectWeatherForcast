@@ -14,6 +14,7 @@ const currentLocation = ref('Unical, Rende, Calabria, Italy')
 const currentTime = ref('')
 const loading = ref(false)
 const error = ref('')
+const deviceLoadError = ref('')
 const selectedDevice = ref(null)
 const map = ref(null)
 const markers = ref({})
@@ -46,10 +47,14 @@ const DEFAULT_MEASUREMENT = availableMeasurements[0]?.measurement || ''
 
 const REFRESH_INTERVAL = 300000 // 5 minutes
 const GEOCODING_DELAY = 1000 // Rate limiting for geocoding API
+const GEOCODING_TIMEOUT = 2500
+const FORECAST_MINUTES = 60
+const DEVICE_LOOKBACK_MINUTES = 60
 
 let refreshTimer = null
 let geocodingQueue = []
 let geocodingTimeout = null
+const geocodeCache = new Map()
 
 // ===========================
 // UTILITY FUNCTIONS
@@ -156,13 +161,21 @@ function getLatestReading(data, deviceId = null) {
 // ===========================
 
 async function reverseGeocode(latitude, longitude) {
+  let timeout = null
   try {
+    const cacheKey = `${Number(latitude).toFixed(5)},${Number(longitude).toFixed(5)}`
+    if (geocodeCache.has(cacheKey)) return geocodeCache.get(cacheKey)
+
+    const controller = new AbortController()
+    timeout = setTimeout(() => controller.abort(), GEOCODING_TIMEOUT)
     const response = await fetch(
       `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=16&addressdetails=1`,
       {
-        headers: { 'User-Agent': 'WeatherApp/1.0' }
+        headers: { 'User-Agent': 'WeatherApp/1.0' },
+        signal: controller.signal
       }
     )
+    clearTimeout(timeout)
     
     if (!response.ok) throw new Error('Geocoding failed')
     
@@ -188,14 +201,24 @@ async function reverseGeocode(latitude, longitude) {
       parts.push(address.state || address.province)
     }
     
-    return parts.length > 0 
+    const locationName = parts.length > 0
       ? parts.join(', ')
       : `Location (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`
+    geocodeCache.set(cacheKey, locationName)
+    return locationName
     
   } catch (error) {
     console.error('Geocoding error:', error)
     return `Location (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`
+  } finally {
+    if (timeout) clearTimeout(timeout)
   }
+}
+
+function getFallbackLocationName(latitude, longitude) {
+  if (latitude == null || longitude == null) return 'Unical, Rende, Calabria'
+  const cacheKey = `${Number(latitude).toFixed(5)},${Number(longitude).toFixed(5)}`
+  return geocodeCache.get(cacheKey) || `Location (${Number(latitude).toFixed(4)}, ${Number(longitude).toFixed(4)})`
 }
 
 // Debounced geocoding to respect API rate limits
@@ -371,56 +394,139 @@ function resetView() {
 // DATA FETCHING
 // ===========================
 
-async function fetchDevices() {
+async function hydrateDeviceLocation(device) {
+  if (device.latitude == null || device.longitude == null) return
+
+  const locationName = await queueGeocode(device.latitude, device.longitude)
+  const current = nearbyLocations.value.find(loc => loc.device_id === device.device_id)
+  if (!current || current.locationName === locationName) return
+
+  current.locationName = locationName
+  if (selectedDevice.value?.device_id === current.device_id) {
+    selectedDevice.value = current
+    currentLocation.value = `${current.locationName} (${current.latitude.toFixed(4)}, ${current.longitude.toFixed(4)})`
+  }
+  updateMapMarkers()
+}
+
+function buildDeviceFromReading(latest, measurement) {
+  return {
+    device_id: latest.device_id,
+    measurement,
+    name: `Robustel Device ${latest.device_id}`,
+    locationName: getFallbackLocationName(latest.latitude, latest.longitude),
+    temp: celsiusToFahrenheit(latest.temperature),
+    tempC: latest.temperature,
+    humidity: latest.humidity,
+    pressure: latest.pressure,
+    latitude: latest.latitude,
+    longitude: latest.longitude,
+    light: latest.light,
+    noise: latest.noise,
+    weatherPrediction: latest.weather_prediction || '—',
+    predictionConfidence: latest.prediction_confidence || 0,
+    lastUpdate: latest.time
+  }
+}
+
+function setWeatherDataFromReading(latest) {
+  const tempF = celsiusToFahrenheit(latest.temperature)
+  const weatherPrediction = latest.weather_prediction || '—'
+  const predictionConfidence = latest.prediction_confidence || 0
+  const { condition, icon } = getWeatherCondition(tempF, weatherPrediction)
+
+  weatherData.value = {
+    temperature: tempF,
+    feelsLike: weatherPrediction,
+    condition,
+    icon,
+    humidity: latest.humidity,
+    pressure: (latest.pressure / 1000).toFixed(2),
+    light: latest.light,
+    noise: latest.noise,
+    airQuality: estimateAirQuality(latest.noise),
+    weatherPrediction,
+    predictionConfidence,
+    description: `${weatherPrediction} with ${(predictionConfidence * 100).toFixed(1)}% confidence. Temperature: ${latest.temperature.toFixed(1)}°C, Humidity: ${latest.humidity}%, Light: ${latest.light}, Noise: ${latest.noise}dB`
+  }
+}
+
+async function fetchLatestDeviceReadings(measurement) {
   try {
+    const data = await api.get(`/api/weather/latest/?minutes=${DEVICE_LOOKBACK_MINUTES}&measurement=${measurement}`)
+    if (Array.isArray(data) && data.length > 0) return data
+  } catch (e) {
+    console.warn(`Latest weather endpoint unavailable for ${measurement}, falling back to forecast history`, e)
+  }
+
+  try {
+    const defaultLatestData = await api.get(`/api/weather/latest/?minutes=${DEVICE_LOOKBACK_MINUTES}`)
+    if (Array.isArray(defaultLatestData) && defaultLatestData.length > 0) return defaultLatestData
+  } catch (e) {
+    console.warn('Default latest weather endpoint unavailable, falling back to forecast history', e)
+  }
+
+  const data = await api.get(`/api/weather/forecast/?minutes=${DEVICE_LOOKBACK_MINUTES}&measurement=${measurement}`)
+  if (Array.isArray(data) && data.length > 0) return getLatestReadingsByDevice(data)
+
+  const defaultData = await api.get(`/api/weather/forecast/?minutes=${DEVICE_LOOKBACK_MINUTES}`)
+  if (!Array.isArray(defaultData) || defaultData.length === 0) return []
+  return getLatestReadingsByDevice(defaultData)
+}
+
+async function fetchDevices({ updateCurrent = false } = {}) {
+  try {
+    loading.value = true
+    error.value = ''
+    deviceLoadError.value = ''
     const devicePromises = availableMeasurements.map(async (device) => {
       try {
-        //const res = await fetch(`${API_BASE}/api/weather/forecast/?minutes=60&measurement=${device.measurement}`)
-        const data = await api.get(`/api/weather/forecast/?minutes=60&measurement=${device.measurement}`)
+        const data = await fetchLatestDeviceReadings(device.measurement)
         if (!Array.isArray(data) || data.length === 0) return null
 
         const latestReadings = getLatestReadingsByDevice(data, device.device_id || 'unknown')
 
-        return Promise.all(latestReadings.map(async (latest) => {
-          // Only geocode if coordinates are available
-          let locationName = 'Unical, Rende, Calabria'
-          if (latest.latitude != null && latest.longitude != null) {
-            locationName = await queueGeocode(latest.latitude, latest.longitude)
-          }
-
-          return {
-            device_id: latest.device_id,
-            measurement: device.measurement,
-            name: `Robustel Device ${latest.device_id}`,
-            locationName,
-            temp: celsiusToFahrenheit(latest.temperature),
-            tempC: latest.temperature,
-            humidity: latest.humidity,
-            pressure: latest.pressure,
-            latitude: latest.latitude,
-            longitude: latest.longitude,
-            light: latest.light,
-            noise: latest.noise,
-            weatherPrediction: latest.weather_prediction || '—',
-            predictionConfidence: latest.prediction_confidence || 0,
-            lastUpdate: latest.time
-          }
-        }))
+        return latestReadings.map(latest => buildDeviceFromReading(latest, device.measurement))
       } catch (e) {
         console.error(`Fetch error for ${device.measurement}:`, e)
-        return null
+        throw e
       }
     })
     
     const results = await Promise.all(devicePromises)
     nearbyLocations.value = results.flat().filter(device => device !== null)
+
+    if (nearbyLocations.value.length > 0 && updateCurrent) {
+      const refreshedSelection = selectedDevice.value
+        ? nearbyLocations.value.find(device => device.device_id === selectedDevice.value.device_id)
+        : null
+      const activeDevice = refreshedSelection || nearbyLocations.value[0]
+
+      selectedDevice.value = refreshedSelection || selectedDevice.value
+      setWeatherDataFromReading({
+        temperature: activeDevice.tempC,
+        humidity: activeDevice.humidity,
+        pressure: activeDevice.pressure,
+        light: activeDevice.light,
+        noise: activeDevice.noise,
+        weather_prediction: activeDevice.weatherPrediction,
+        prediction_confidence: activeDevice.predictionConfidence,
+      })
+    }
     
     if (map.value) {
       updateMapMarkers()
     }
+
+    nearbyLocations.value.forEach(device => {
+      hydrateDeviceLocation(device)
+    })
   } catch (e) {
     console.error('Device fetch error:', e)
-    showError('Failed to load devices')
+    deviceLoadError.value = e.message || 'Failed to load devices'
+    showError(deviceLoadError.value)
+  } finally {
+    loading.value = false
   }
 }
 
@@ -429,7 +535,24 @@ async function fetchWeatherData(measurement = DEFAULT_MEASUREMENT, deviceId = nu
     loading.value = true
     error.value = ''
     
-    const data = await api.get(`/api/weather/forecast/?minutes=60&measurement=${measurement}`)
+    const cachedDevice = deviceId
+      ? nearbyLocations.value.find(device => device.measurement === measurement && device.device_id === String(deviceId))
+      : nearbyLocations.value.find(device => device.measurement === measurement)
+
+    if (cachedDevice) {
+      setWeatherDataFromReading({
+        temperature: cachedDevice.tempC,
+        humidity: cachedDevice.humidity,
+        pressure: cachedDevice.pressure,
+        light: cachedDevice.light,
+        noise: cachedDevice.noise,
+        weather_prediction: cachedDevice.weatherPrediction,
+        prediction_confidence: cachedDevice.predictionConfidence,
+      })
+      return
+    }
+
+    const data = await api.get(`/api/weather/forecast/?minutes=${FORECAST_MINUTES}&measurement=${measurement}`)
 
     if (!Array.isArray(data) || data.length === 0) {
       throw new Error('No weather data available')
@@ -443,25 +566,7 @@ async function fetchWeatherData(measurement = DEFAULT_MEASUREMENT, deviceId = nu
       throw new Error('No valid weather data with timestamp')
     }
     
-    const tempF = celsiusToFahrenheit(latest.temperature)
-    const weatherPrediction = latest.weather_prediction || '—'
-    const predictionConfidence = latest.prediction_confidence || 0
-    const { condition, icon } = getWeatherCondition(tempF, weatherPrediction)
-    
-    weatherData.value = {
-      temperature: tempF,
-      feelsLike: weatherPrediction, // Use weather prediction as "feels like"
-      condition,
-      icon,
-      humidity: latest.humidity,
-      pressure: (latest.pressure / 1000).toFixed(2),
-      light: latest.light,
-      noise: latest.noise,
-      airQuality: estimateAirQuality(latest.noise),
-      weatherPrediction,
-      predictionConfidence,
-      description: `${weatherPrediction} with ${(predictionConfidence * 100).toFixed(1)}% confidence. Temperature: ${latest.temperature.toFixed(1)}°C, Humidity: ${latest.humidity}%, Light: ${latest.light}, Noise: ${latest.noise}dB`
-    }
+    setWeatherDataFromReading(latest)
   } catch (e) {
     console.error('Weather fetch error:', e)
     showError(e.message || 'Failed to load weather data')
@@ -495,7 +600,15 @@ function selectDevice(device) {
   selectedDevice.value = device
   currentLocation.value = `${device.locationName} (${device.latitude.toFixed(4)}, ${device.longitude.toFixed(4)})`
   
-  fetchWeatherData(device.measurement, device.device_id)
+  setWeatherDataFromReading({
+    temperature: device.tempC,
+    humidity: device.humidity,
+    pressure: device.pressure,
+    light: device.light,
+    noise: device.noise,
+    weather_prediction: device.weatherPrediction,
+    prediction_confidence: device.predictionConfidence,
+  })
   
   if (map.value) {
     map.value.setView([device.latitude, device.longitude], 16, {
@@ -534,19 +647,12 @@ watch(activeLayer, () => {
 onMounted(() => {
   updateTime()
   initMap()
-  fetchDevices()
-  fetchWeatherData()
+  fetchDevices({ updateCurrent: true })
   
   // Set up refresh timer
   refreshTimer = setInterval(() => {
     updateTime()
-    fetchDevices()
-    
-    if (selectedDevice.value) {
-      fetchWeatherData(selectedDevice.value.measurement, selectedDevice.value.device_id)
-    } else {
-      fetchWeatherData()
-    }
+    fetchDevices({ updateCurrent: true })
   }, REFRESH_INTERVAL)
 })
 
@@ -880,10 +986,14 @@ onUnmounted(() => {
               
               <!-- No devices message -->
               <div v-if="nearbyLocations.length === 0" class="text-center text-muted p-3">
-                <div class="spinner-border spinner-border-sm mb-2" role="status">
+                <div v-if="loading" class="spinner-border spinner-border-sm mb-2" role="status">
                   <span class="visually-hidden">Loading...</span>
                 </div>
-                <small class="d-block">Loading devices...</small>
+                <i v-else class="bi bi-broadcast-pin d-block fs-4 mb-2"></i>
+                <small v-if="deviceLoadError && !loading" class="d-block text-danger">
+                  Unable to load devices: {{ deviceLoadError }}
+                </small>
+                <small v-else class="d-block">{{ loading ? 'Loading devices...' : 'No active devices in the last 60 minutes' }}</small>
               </div>
             </div>
           </div>

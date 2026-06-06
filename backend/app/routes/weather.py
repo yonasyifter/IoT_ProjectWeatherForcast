@@ -342,6 +342,28 @@ from(bucket: "{INFLUXDB_BUCKET}")
     return result
 
 
+@router.get("/latest/", response_model=List[WeatherPoint])
+def get_latest_weather_readings(
+    minutes: int = Query(60, ge=1, le=30 * 24 * 60),
+    measurement: str = Query(meas),
+):
+    rows = _query_measurement_rows(measurement, minutes, 1000)
+    latest: dict[str, dict[str, Any]] = {}
+
+    for row in rows:
+        device_id = _device_from(row)
+        key = _normalize_key(device_id)
+        row = {**row, "device_id": device_id}
+        current = latest.get(key)
+
+        if current is None or str(row.get("time") or "") > str(current.get("time") or ""):
+            latest[key] = row
+
+    result = list(latest.values())
+    result.sort(key=lambda row: str(row.get("device_id", "")), reverse=False)
+    return result
+
+
 @router.get("/digital-twin/alerts")
 def get_digital_twin_alerts(
     limit: int = Query(50, ge=1, le=200),

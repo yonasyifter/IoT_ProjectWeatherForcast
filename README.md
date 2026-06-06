@@ -192,8 +192,10 @@ FIREBASE_CREDENTIALS_PATH=path/to/firebase-service-account.json
 # AI Providers - set at least one
 GROQ_API_KEY=your_groq_key
 GROQ_MODEL_ID=groq/llama-3.3-70b-versatile
+CREWAI_GROQ_MAX_TOKENS=4096
 OPENROUTER_API_KEY=your_openrouter_key
 OPENROUTER_MODEL_ID=openrouter/meta-llama/llama-3.3-70b-instruct
+CREWAI_OPENROUTER_MAX_TOKENS=384
 
 # CORS
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost

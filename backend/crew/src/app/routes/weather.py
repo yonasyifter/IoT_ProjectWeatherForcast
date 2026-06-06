@@ -43,3 +43,47 @@ from(bucket: "{INFLUXDB_BUCKET}")
     result = list(by_time_device.values())
     result.sort(key=lambda x: x["time"])
     return result
+
+
+@router.get("/latest/", response_model=List[WeatherPoint])
+def get_latest_weather_readings(
+    minutes: int = Query(60, ge=1, le=30 * 24 * 60),
+    measurement: str = Query(meas),
+):
+    flux = f'''
+from(bucket: "{INFLUXDB_BUCKET}")
+  |> range(start: -{minutes}m)
+  |> filter(fn: (r) => r._measurement == "{measurement}")
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> sort(columns: ["_time"], desc: true)
+  |> limit(n: 1000)
+'''
+
+    tables = influx_query(flux)
+    latest: Dict[str, Dict[str, Any]] = {}
+
+    for table in tables:
+        for record in table.records:
+            values = {
+                key: value
+                for key, value in record.values.items()
+                if key not in {"result", "table", "_start", "_stop"}
+            }
+            record_time = record.get_time()
+            values["time"] = record_time.isoformat() if record_time else values.get("_time")
+
+            device_id = values.get("device_id") or values.get("deviceId")
+            thing_id = values.get("thingId") or values.get("thing_id")
+            if not device_id and thing_id and ":" in str(thing_id):
+                device_id = str(thing_id).rsplit(":", 1)[1]
+            device_id = str(device_id or thing_id or "unknown")
+            values["device_id"] = device_id
+
+            key = "".join(char for char in device_id.lower() if char.isalnum())
+            current = latest.get(key)
+            if current is None or str(values.get("time") or "") > str(current.get("time") or ""):
+                latest[key] = values
+
+    result = list(latest.values())
+    result.sort(key=lambda row: str(row.get("device_id", "")), reverse=False)
+    return result

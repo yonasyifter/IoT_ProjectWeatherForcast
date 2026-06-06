@@ -74,6 +74,9 @@ class ProviderConfig:
     default_key: str = ""
     base_url: Optional[str] = None
     extra_headers: dict = field(default_factory=dict)
+    max_tokens_env: str = ""
+    default_max_tokens: int = 1024
+    strip_message_fields: tuple[str, ...] = ()
     # AWS-specific fields
     aws_aki: str = ""
     aws_secret: str = ""
@@ -86,6 +89,9 @@ PROVIDERS: list[ProviderConfig] = [
         name="Groq (llama-3.3-70b)",
         model="groq/llama-3.3-70b-versatile",
         api_key_env="GROQ_API_KEY",
+        max_tokens_env="CREWAI_GROQ_MAX_TOKENS",
+        default_max_tokens=4096,
+        strip_message_fields=("cache_breakpoint", "cache_control"),
     ),
 # ── 2. OpenRouter (optional) ─────────────────────────────────────────────
 
@@ -98,6 +104,9 @@ PROVIDERS: list[ProviderConfig] = [
             "HTTP-Referer": "http://localhost:3000",
             "X-Title": "SmartPark",
         },
+        max_tokens_env="CREWAI_OPENROUTER_MAX_TOKENS",
+        default_max_tokens=384,
+        strip_message_fields=("cache_breakpoint", "cache_control"),
     )
 ]
 
